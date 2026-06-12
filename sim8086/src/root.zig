@@ -177,6 +177,7 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     const op_str = if (op == .mov_itm) "mov" else @tagName(@as(ItmOp, @enumFromInt((buf[i + 1] >> 3) & 0b00000111)));
                     try writer.print("{s} ", .{op_str});
                     const w = buf_i & 0b00000001;
+                    const w_keyword = if (w == 1) "word" else "byte";
                     const s = (buf_i & 0b00000010) >> 1;
 
                     const mod = buf[i + 1] >> 6;
@@ -191,13 +192,11 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                                 if (s == 0 and w == 1) {
                                     const data_hi: u16 = @intCast(buf[i + 3]);
                                     data = (data_hi << 8) | data;
-                                    try writer.print("word ", .{});
                                     i += 4;
                                 } else {
-                                    try writer.print("byte ", .{});
                                     i += 3;
                                 }
-                                try writer.print("[{s}], {d}\n", .{ eff_addr, data });
+                                try writer.print("{s} [{s}], {d}\n", .{ w_keyword, eff_addr, data });
                             } else {
                                 const addr_lo: u16 = @intCast(buf[i + 2]);
                                 const addr_hi: u16 = @intCast(buf[i + 3]);
@@ -206,12 +205,11 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                                 if (s == 0 and w == 1) {
                                     const data_hi: u16 = @intCast(buf[i + 5]);
                                     data = (data_hi << 8) | data;
-                                    try writer.print("word [{d}], {d}\n", .{ addr, data });
                                     i += 6;
                                 } else {
-                                    try writer.print("byte [{d}], {d}\n", .{ addr, data });
                                     i += 5;
                                 }
+                                try writer.print("{s} [{d}], {d}\n", .{ w_keyword, addr, data });
                             }
                         },
 
@@ -247,14 +245,13 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
 
                             var data: u16 = @intCast(buf[i + 3]);
                             if (s == 0 and w == 1) {
-                                try writer.print("word ", .{});
                                 const data_hi: u16 = @intCast(buf[i + 4]);
                                 data = (data_hi << 8) | data;
                                 i += 5;
                             } else {
-                                try writer.print("byte ", .{});
                                 i += 4;
                             }
+                            try writer.print("{s} ", .{w_keyword});
 
                             if (disp == 0) {
                                 try writer.print("[{s}], ", .{eff_addr});
