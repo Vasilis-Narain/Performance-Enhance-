@@ -18,6 +18,7 @@ const addresses: [8][]const u8 = [_][]const u8{
 };
 
 /// Disassemble 8086 machine code. All `movs` considered (well not quite, but almost).
+/// Should handle all edge cases atm (listing_0040_challenge_movs.asm updated to reflect them)
 ///
 /// See `main.zig` for file load and various initializations.
 /// Input:
