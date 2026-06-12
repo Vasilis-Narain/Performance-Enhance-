@@ -20,23 +20,14 @@ const addresses: [8][]const u8 = [_][]const u8{
 /// Disassemble 8086 machine code. All `movs` considered (well not quite, but almost).
 ///
 /// See `main.zig` for file load and various initializations.
-/// This function just takes a plain old buffer.
+/// Input:
+///     writer: *Io.Writer -> zig way to print to stdout
+///     buf: []u8 -> byte buffer
 ///
 /// Sample bit instruction:
 ///
 ///     ;Register-to-register:
 ///     10001001 11011001 -> mov cx, bx
-///
-///     ; Immediate-to-register:
-///     [1011 w reg] [data] [data if w=1]
-///     ; 8-bit:
-///     [1011 0 001] [12] -> mov cl, 12
-///     [1011 0 101] [12] -> mov ch, -12
-///     ; 16-bit:
-///     [1011 1 reg] [12] [0] -> mov cx, 12
-///     [1011 1 reg] [12] [0] -> mov cx, -12
-///     [1011 1 reg] [lo] [hi] -> mov dx, 3948
-///     [1011 1 reg] [lo] [hi] -> mov dx, -3948
 ///
 pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
     try writer.print("bits 16\n", .{});
@@ -244,8 +235,8 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
             // Immediate-to-register OR Memory to accumulator OR Accumulator to memory
             0b00000101 => {
                 // Immediate-to-register
+                try writer.print("mov ", .{});
                 if (buf_i & 0b00010000 == 0b00010000) {
-                    try writer.print("mov ", .{});
                     const w = (buf_i >> 3) & 1;
                     const reg = registers[w * 8 + (buf_i & 0b00000111)];
                     try writer.print("{s}, ", .{reg});
@@ -260,6 +251,21 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                         try writer.print("{d}\n", .{data});
                         i += 3;
                     }
+                } else {
+                    const w = buf_i & 0b00000001;
+                    var addr: u16 = @intCast(buf[i + 1]);
+                    const reg = registers[w * 8];
+                    if (w == 1) {
+                        const addr_hi: u16 = @intCast(buf[i + 2]);
+                        addr = (addr_hi << 8) | addr;
+                        i += 1;
+                    }
+                    if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
+                        try writer.print("[{d}], {s}\n", .{ addr, reg });
+                    } else { //Memory-to-accumulator
+                        try writer.print("{s}, [{d}]\n", .{ reg, addr });
+                    }
+                    i += 2;
                 }
             },
             else => unreachable,
