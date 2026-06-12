@@ -81,14 +81,23 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                             } else {
                                 try writer.print("[{s}], {s}\n", .{ eff_addr, reg_str });
                             }
+                            i += 2;
+                        } else {
+                            const data_lo: u16 = @intCast(buf[i + 2]);
+                            const data_hi: u16 = @intCast(buf[i + 3]);
+                            const data: u16 = (data_hi << 8) | data_lo;
+                            try writer.print("{s}, [{d}]\n", .{ reg_str, data });
+                            i += 4;
                         }
-                        i += 2;
                     },
 
                     // Memory Mode 01, 8-bit displacement follows
                     0b00000001 => {
                         const eff_addr = addresses[rm];
-                        const data: i8 = @bitCast(buf[i + 2]);
+                        var data: i8 = @bitCast(buf[i + 2]);
+                        const sign = if (data > 0) "+" else "-";
+                        if (data < 0) data *= -1;
+
                         if (data == 0) {
                             if (d == 1) {
                                 try writer.print("{s}, [{s}]\n", .{ reg_str, eff_addr });
@@ -97,9 +106,9 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                             }
                         } else {
                             if (d == 1) {
-                                try writer.print("{s}, [{s} + {d}]\n", .{ reg_str, eff_addr, data });
+                                try writer.print("{s}, [{s} {s} {d}]\n", .{ reg_str, eff_addr, sign, data });
                             } else {
-                                try writer.print("[{s} + {d}], {s}\n", .{ eff_addr, data, reg_str });
+                                try writer.print("[{s} {s} {d}], {s}\n", .{ eff_addr, sign, data, reg_str });
                             }
                         }
                         i += 3;
@@ -110,7 +119,9 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                         const eff_addr = addresses[rm];
                         const data_lo: u16 = @intCast(buf[i + 2]);
                         const data_hi: u16 = @intCast(buf[i + 3]);
-                        const data: i16 = @bitCast((data_hi << 8) | data_lo);
+                        var data: i16 = @bitCast((data_hi << 8) | data_lo);
+                        const sign = if (data > 0) "+" else "-";
+                        if (data < 0) data *= -1;
                         if (data == 0) {
                             if (d == 1) {
                                 try writer.print("{s}, [{s}]\n", .{ reg_str, eff_addr });
@@ -119,9 +130,9 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                             }
                         } else {
                             if (d == 1) {
-                                try writer.print("{s}, [{s} + {d}]\n", .{ reg_str, eff_addr, data });
+                                try writer.print("{s}, [{s} {s} {d}]\n", .{ reg_str, eff_addr, sign, data });
                             } else {
-                                try writer.print("[{s} + {d}], {s}\n", .{ eff_addr, data, reg_str });
+                                try writer.print("[{s} {s} {d}], {s}\n", .{ eff_addr, sign, data, reg_str });
                             }
                         }
                         i += 4;
@@ -134,7 +145,102 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                 }
             },
             // Immediate-to-register/memory
-            0b00000110 => {},
+            0b00000110 => {
+                assert(buf_i >> 1 == 0b01100011);
+                try writer.print("mov ", .{});
+                const w = buf_i & 0b00000001;
+
+                const mod = buf[i + 1] >> 6;
+                const rm = buf[i + 1] & 0b00000111;
+                switch (mod) {
+
+                    // Memory Mode 00 no disp except R/M = 110
+                    0b00000000 => {
+                        const eff_addr = addresses[rm];
+                        if (rm != 0b00000110) {
+                            try writer.print("[{s}], ", .{eff_addr});
+                            var data: u16 = @intCast(buf[i + 2]);
+                            if (w == 1) {
+                                const data_hi: u16 = @intCast(buf[i + 3]);
+                                data = (data_hi << 8) | data;
+                                try writer.print("word {d}\n", .{data});
+                                i += 4;
+                            } else {
+                                try writer.print("byte {d}\n", .{data});
+                                i += 3;
+                            }
+                        } else {
+                            const addr_lo: u16 = @intCast(buf[i + 2]);
+                            const addr_hi: u16 = @intCast(buf[i + 3]);
+                            const addr: u16 = (addr_hi << 8) | addr_lo;
+                            var data: u16 = @intCast(buf[i + 4]);
+                            if (w == 1) {
+                                const data_hi: u16 = @intCast(buf[i + 5]);
+                                data = (data_hi << 8) | data;
+                                try writer.print("word [{d}], {d}\n", .{ addr, data });
+                                i += 6;
+                            } else {
+                                try writer.print("byte [{d}], {d}\n", .{ addr, data });
+                                i += 5;
+                            }
+                        }
+                    },
+
+                    // Register Mode 11 no displacement
+                    0b00000011 => {
+                        const rm_str = registers[w * 8 + rm];
+                        var data: u16 = @intCast(buf[i + 2]);
+                        if (w == 1) {
+                            const data_hi: u16 = @intCast(buf[i + 3]);
+                            data = (data_hi << 8) | data;
+                            i += 4;
+                        } else {
+                            i += 3;
+                        }
+                        try writer.print("{s}, {d}\n", .{ rm_str, data });
+                    },
+
+                    // Memory Mode 01, 8-bit displacement follows
+                    //  also Memory Mode 10, 16-bit displacement follows
+                    0b00000001, 0b00000010 => {
+                        const eff_addr = addresses[rm];
+                        var disp: i16 = undefined;
+                        const disp_lo: u16 = @intCast(buf[i + 2]);
+
+                        if (mod == 0b00000010) {
+                            const disp_hi: u16 = @intCast(buf[i + 3]);
+                            disp = @bitCast((disp_hi << 8) | disp_lo);
+                            i += 1;
+                        } else disp = @bitCast(disp_lo);
+
+                        const sign = if (disp > 0) "+" else "-";
+                        if (disp < 0) disp *= -1;
+
+                        if (disp == 0) {
+                            try writer.print("[{s}], ", .{eff_addr});
+                        } else {
+                            try writer.print("[{s} {s} {d}], ", .{ eff_addr, sign, disp });
+                        }
+
+                        var data: u16 = @intCast(buf[i + 3]);
+                        if (w == 0) {
+                            try writer.print("byte ", .{});
+                            i += 4;
+                        } else {
+                            try writer.print("word ", .{});
+                            const data_hi: u16 = @intCast(buf[i + 4]);
+                            data = (data_hi << 8) | data;
+                            i += 5;
+                        }
+                        try writer.print("{d}\n", .{data});
+                    },
+
+                    else => {
+                        std.debug.print("mod: {b}\n", .{mod});
+                        break;
+                    },
+                }
+            },
             // Immediate-to-register OR Memory to accumulator OR Accumulator to memory
             0b00000101 => {
                 // Immediate-to-register
