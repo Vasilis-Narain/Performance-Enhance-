@@ -65,7 +65,7 @@ cmp [bx + 2], cx
 cmp [bp + si + 4], bh
 cmp [bp + di + 6], di
 cmp byte [bx], 34
-cmp word [4834], 2329
+cmp word [4834], 29
 cmp ax, [bp]
 cmp al, [bx + si]
 cmp ax, bx
@@ -73,4 +73,28 @@ cmp al, ah
 cmp ax, 1000
 cmp al, 226
 cmp al, 9
+jnz ($+2)+2
+jnz ($+2)+-4
+jnz ($+2)+-6
+jnz ($+2)+-4
+je ($+2)+-2
+jl ($+2)+-4
+jle ($+2)+-6
+jb ($+2)+-8
+jbe ($+2)+-10
+jp ($+2)+-12
+jo ($+2)+-14
+js ($+2)+-16
+jnz ($+2)+-18
+jnl ($+2)+-20
+jg ($+2)+-22
+jnb ($+2)+-24
+ja ($+2)+-26
+jnp ($+2)+-28
+jno ($+2)+-30
+jns ($+2)+-32
+loop ($+2)+-34
+loopz ($+2)+-36
+loopnz ($+2)+-38
+jcxz ($+2)+-40
 

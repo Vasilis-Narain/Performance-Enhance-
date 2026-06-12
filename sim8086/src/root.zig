@@ -47,8 +47,33 @@ const ItmOp = enum(u8) {
     cmp = 0b00000111,
 };
 
+const JumpOp = enum(u8) {
+    je = 0b01110100,
+    jl = 0b01111100,
+    jle = 0b01111110,
+    jb = 0b01110010,
+    jbe = 0b01110110,
+    jp = 0b01111010,
+    jo = 0b01110000,
+    js = 0b01111000,
+    jnz = 0b01110101,
+    jnl = 0b01111101,
+    jg = 0b01111111,
+    jnb = 0b01110011,
+    ja = 0b01110111,
+    jnp = 0b01111011,
+    jno = 0b01110001,
+    jns = 0b01111001,
+    loop = 0b11100010,
+    loopz = 0b11100001,
+    loopnz = 0b11100000,
+    jcxz = 0b11100011,
+    _,
+};
+
 /// Disassemble 8086 machine code. All `movs` considered (well not quite, but almost).
 /// Should handle all edge cases atm (listing_0040_challenge_movs.asm updated to reflect them)
+/// And also add sub cmp and jumps
 ///
 /// See `main.zig` for file load and various initializations.
 /// Input:
@@ -65,6 +90,18 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
     var i: usize = 0;
     while (i + 1 < buf.len) {
         const buf_i = buf[i];
+        // Check for jumps
+        const jump: JumpOp = @enumFromInt(buf_i);
+        switch (jump) {
+            _ => {},
+            else => {
+                const jump_str = @tagName(jump);
+                const data: i8 = @bitCast(buf[i + 1]);
+                try writer.print("{s} ($+2)+{d}\n", .{ jump_str, data });
+                i += 2;
+                continue;
+            },
+        }
         const partial_opcode = if (buf_i >> 5 == 0b00000101) buf_i >> 5 else buf_i >> 2;
         // for immediate to register operations, as they'd have same
         // partial op as Register-to-register mov
