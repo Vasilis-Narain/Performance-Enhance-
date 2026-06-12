@@ -256,17 +256,14 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     const w = buf_i & 0b00000001;
                     var addr: u16 = @intCast(buf[i + 1]);
                     const reg = registers[w * 8];
-                    if (w == 1) {
-                        const addr_hi: u16 = @intCast(buf[i + 2]);
-                        addr = (addr_hi << 8) | addr;
-                        i += 1;
-                    }
+                    const addr_hi: u16 = @intCast(buf[i + 2]);
+                    addr = (addr_hi << 8) | addr;
                     if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
                         try writer.print("[{d}], {s}\n", .{ addr, reg });
                     } else { //Memory-to-accumulator
                         try writer.print("{s}, [{d}]\n", .{ reg, addr });
                     }
-                    i += 2;
+                    i += 3;
                 }
             },
             else => unreachable,
