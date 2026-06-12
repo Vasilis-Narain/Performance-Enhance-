@@ -41,7 +41,7 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
 
             // Register/memory-to/from-register
             0b00000100 => {
-                assert(buf_i >> 2 == 0b00100010); // homework constraints/assists
+                assert(buf_i >> 2 == 0b00100010);
                 try writer.print("mov ", .{});
                 const d = (buf_i & 0b00000010) >> 1;
                 const w = (buf_i & 0b00000001);
