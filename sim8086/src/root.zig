@@ -75,6 +75,8 @@ const JumpOp = enum(u8) {
 /// Should handle all edge cases atm (listing_0040_challenge_movs.asm updated to reflect them)
 /// And also add sub cmp and jumps
 ///
+/// Is it pretty? No. Is it extendable? Probably not. Does it work? Well, it passes the test.
+///
 /// See `main.zig` for file load and various initializations.
 /// Input:
 ///     writer: *Io.Writer -> zig way to print to stdout
@@ -86,7 +88,6 @@ const JumpOp = enum(u8) {
 ///     10001001 11011001 -> mov cx, bx
 ///
 pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
-    try writer.print("bits 16\n", .{});
     var i: usize = 0;
     while (i + 1 < buf.len) {
         const buf_i = buf[i];
@@ -107,6 +108,7 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
         // partial op as Register-to-register mov
         if (partial_opcode != 0b00000101) {
             const op: Op = @enumFromInt(partial_opcode);
+            std.debug.print("op: {s}\n", .{@tagName(op)});
             switch (op) {
 
                 // Register/memory-to/from-register
@@ -122,6 +124,7 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     const reg = (buf[i + 1] >> 3) & 0b00000111;
                     const reg_str = registers[w * 8 + reg];
                     const rm = buf[i + 1] & 0b00000111;
+                    std.debug.print("mod_rtr: {b}\n", .{mod});
                     switch (mod) {
 
                         // Register Mode 11
@@ -215,10 +218,11 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     try writer.print("{s} ", .{op_str});
                     const w = buf_i & 0b00000001;
                     const w_keyword = if (w == 1) "word" else "byte";
-                    const s = (buf_i & 0b00000010) >> 1;
+                    const s = if (op == .mov_itm) 0 else (buf_i & 0b00000010) >> 1;
 
                     const mod = buf[i + 1] >> 6;
                     const rm = buf[i + 1] & 0b00000111;
+                    std.debug.print("mod_itm: {b}\n", .{mod});
                     switch (mod) {
 
                         // Memory Mode 00 no disp except R/M = 110

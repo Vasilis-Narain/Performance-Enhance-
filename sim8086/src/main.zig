@@ -28,14 +28,15 @@ pub fn main(init: std.process.Init) !void {
         .mode = .read_only,
         .lock = .exclusive,
     })) |file| {
-        defer file.close(io);
         const buf = try arena.alloc(u8, try file.length(io));
         var reader = file.reader(io, buf);
         reader.interface.readSliceAll(buf) catch |err| switch (err) {
             error.ReadFailed => return reader.err.?,
             else => return err,
         };
+        file.close(io);
         try stdout_writer.print("; {s} disassembly:\n", .{filepath});
+        try stdout_writer.print("bits 16\n", .{});
         try sim8086.disassemble(stdout_writer, buf[0..]);
     } else |err| {
         return err;
