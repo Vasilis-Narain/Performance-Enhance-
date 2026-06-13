@@ -20,13 +20,15 @@ const addresses: [8][]const u8 = [_][]const u8{
 const Op = enum(u8) {
     mov_rtr = 0b00100010,
     add_rtr = 0b00000000,
+    adc_rtr = 0b00000100,
     sub_rtr = 0b00001010,
     cmp_rtr = 0b00001110,
 
     mov_itm = 0b00110001,
-    add_sub_cmp_itm = 0b00100000,
+    arithmetic_itm = 0b00100000,
 
     add_ita = 0b00000001,
+    adc_ita = 0b00000101,
     sub_ita = 0b00001011,
     cmp_ita = 0b00001111,
 
@@ -34,6 +36,7 @@ const Op = enum(u8) {
         return switch (self) {
             .mov_rtr, .mov_itm => "mov",
             .add_rtr, .add_ita => "add",
+            .adc_rtr, .adc_ita => "adc",
             .sub_rtr, .sub_ita => "sub",
             .cmp_rtr, .cmp_ita => "cmp",
             else => unreachable,
@@ -43,6 +46,7 @@ const Op = enum(u8) {
 
 const ItmOp = enum(u8) {
     add = 0b00000000,
+    adc = 0b00000010,
     sub = 0b00000101,
     cmp = 0b00000111,
 };
@@ -103,17 +107,16 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                 continue;
             },
         }
-        const partial_opcode = if (buf_i >> 5 == 0b00000101) buf_i >> 5 else buf_i >> 2;
+        const partial_opcode = if (buf_i >> 5 == 0b00000101) (buf_i >> 5) | 0b10000000 else buf_i >> 2;
         // for immediate to register operations, as they'd have same
         // partial op as Register-to-register mov
-        if (partial_opcode != 0b00000101) {
+        if (partial_opcode != 0b10000101) {
             const op: Op = @enumFromInt(partial_opcode);
-            std.debug.print("op: {s}\n", .{@tagName(op)});
             switch (op) {
 
                 // Register/memory-to/from-register
                 // mov, sub/cmp, add
-                .mov_rtr, .cmp_rtr, .sub_rtr, .add_rtr => {
+                .mov_rtr, .cmp_rtr, .sub_rtr, .add_rtr, .adc_rtr => {
                     const op_str = op.getOpString();
 
                     try writer.print("{s} ", .{op_str});
@@ -124,7 +127,6 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     const reg = (buf[i + 1] >> 3) & 0b00000111;
                     const reg_str = registers[w * 8 + reg];
                     const rm = buf[i + 1] & 0b00000111;
-                    std.debug.print("mod_rtr: {b}\n", .{mod});
                     switch (mod) {
 
                         // Register Mode 11
@@ -206,14 +208,13 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                         },
 
                         else => {
-                            std.debug.print("mod: {b}\n", .{mod});
                             break;
                         },
                     }
                 },
                 // Immediate-to-register/memory
                 // mov, add/sub/cmp
-                .mov_itm, .add_sub_cmp_itm => {
+                .mov_itm, .arithmetic_itm => {
                     const op_str = if (op == .mov_itm) "mov" else @tagName(@as(ItmOp, @enumFromInt((buf[i + 1] >> 3) & 0b00000111)));
                     try writer.print("{s} ", .{op_str});
                     const w = buf_i & 0b00000001;
@@ -222,7 +223,6 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
 
                     const mod = buf[i + 1] >> 6;
                     const rm = buf[i + 1] & 0b00000111;
-                    std.debug.print("mod_itm: {b}\n", .{mod});
                     switch (mod) {
 
                         // Memory Mode 00 no disp except R/M = 110
@@ -305,7 +305,7 @@ pub fn disassemble(writer: *Io.Writer, buf: []u8) Io.Writer.Error!void {
                     }
                 },
                 // Immediate to accumulator
-                .add_ita, .cmp_ita, .sub_ita => {
+                .add_ita, .adc_ita, .cmp_ita, .sub_ita => {
                     const op_str = op.getOpString();
                     try writer.print("{s} ", .{op_str});
                     const w = buf_i & 0b00000001;

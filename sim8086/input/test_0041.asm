@@ -1,5 +1,21 @@
 ; input/listing_0041_add_sub_cmp_jnz disassembly:
 bits 16
+mov ax, [bx + di - 37]
+mov [si - 300], cx
+mov dx, [bx - 32]
+mov byte [bp + di], 7
+mov byte [125], 7
+mov word [378], 999
+mov bh, 7
+mov bx, 7809
+mov byte [di + 16], 5
+mov word [bp + si - 901], 347
+mov bp, [5]
+mov bx, [3458]
+mov ax, [2555]
+mov al, [15]
+mov [2554], ax
+mov [15], al
 add bx, [bx + si]
 add bx, [bp]
 add si, 2

@@ -13,8 +13,36 @@
 ; ========================================================================
 ; LISTING 41
 ; ========================================================================
+; Added listing 40 to ensure
+; mov doesnt break.
 
 bits 16
+
+; Signed displacements
+mov ax, [bx + di - 37]
+mov [si - 300], cx
+mov dx, [bx - 32]
+
+; Explicit sizes
+mov [bp + di], byte 7
+mov byte [125], 7
+mov word [378], 999
+mov bh, 7
+mov bx, 7809
+mov [di + 16], byte 5
+mov [bp + si - 901], word 347
+ 
+; Direct address
+mov bp, [5]
+mov bx, [3458]
+
+; Memory-to-accumulator test
+mov ax, [2555]
+mov al, [15]
+
+; Accumulator-to-memory test
+mov [2554], ax
+mov [15], al
 
 add bx, [bx+si]
 add bx, [bp]
@@ -41,6 +69,32 @@ add al, ah
 add ax, 1000
 add al, -30
 add al, 9
+
+adc bx, [bx+si]
+adc bx, [bp]
+adc si, 2
+adc bp, 2
+adc bp, 6969
+adc cx, 8
+adc bx, [bp + 0]
+adc cx, [bx + 2]
+adc bh, [bp + si + 4]
+adc di, [bp + di + 6]
+adc [bx+si], bx
+adc [bp], bx
+adc [bp + 0], bx
+adc [bx + 2], cx
+adc [bp + si + 4], bh
+adc [bp + di + 6], di
+adc byte [bx], 34
+adc word [bp + si + 1000], 29
+adc ax, [bp]
+adc al, [bx + si]
+adc ax, bx
+adc al, ah
+adc ax, 1000
+adc al, -30
+adc al, 9
 
 sub bx, [bx+si]
 sub bx, [bp]
