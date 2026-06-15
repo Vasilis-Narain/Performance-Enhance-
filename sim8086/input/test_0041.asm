@@ -41,6 +41,31 @@ add al, ah
 add ax, 1000
 add al, 226
 add al, 9
+adc bx, [bx + si]
+adc bx, [bp]
+adc si, 2
+adc bp, 2
+adc bp, 6969
+adc cx, 8
+adc bx, [bp]
+adc cx, [bx + 2]
+adc bh, [bp + si + 4]
+adc di, [bp + di + 6]
+adc [bx + si], bx
+adc [bp], bx
+adc [bp], bx
+adc [bx + 2], cx
+adc [bp + si + 4], bh
+adc [bp + di + 6], di
+adc byte [bx], 34
+adc word [bp + si + 1000], 29
+adc ax, [bp]
+adc al, [bx + si]
+adc ax, bx
+adc al, ah
+adc ax, 1000
+adc al, 226
+adc al, 9
 sub bx, [bx + si]
 sub bx, [bp]
 sub si, 2
@@ -113,4 +138,4 @@ loop ($+2)+-34
 loopz ($+2)+-36
 loopnz ($+2)+-38
 jcxz ($+2)+-40
-
+; Instructions read: 138

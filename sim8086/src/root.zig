@@ -113,6 +113,8 @@ const Command = struct {
     w: ?u8 = null,
     s: ?u8 = null,
     negative: ?bool = null,
+    commandBuf: [64]u8 = undefined,
+    command: []const u8 = &.{},
 };
 
 /// Disassemble 8086 machine code. All `movs` considered (well not quite, but almost).
@@ -138,17 +140,19 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
         // Check for jumps
         const jump: JumpOp = @enumFromInt(buf_i);
         var command: Command = .{}; // return value
+        var writer: std.Io.Writer = .fixed(&command.commandBuf);
         switch (jump) {
             _ => {},
             else => {
-                //const jump_str = @tagName(jump);
+                const jump_str = @tagName(jump);
                 const data: i8 = @bitCast(buf[buf_pos.* + 1]);
                 if (data < 0) command.negative = true;
                 command.data = buf[buf_pos.* + 1];
                 command.jump_op = jump;
                 buf_pos.* += 2;
+                try writer.print("{s} ($+2)+{d}", .{ jump_str, data });
+                command.command = writer.buffered();
                 return command;
-                //try writer.print("{s} ($+2)+{d}\n", .{ jump_str, data });
             },
         }
         const partial_opcode = if (buf_i >> 5 == 0b00000101) (buf_i >> 5) | 0b10000000 else buf_i >> 2;
@@ -161,9 +165,9 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
             // Register/memory-to/from-register
             // mov, sub/cmp, add
             .mov_rtr, .cmp_rtr, .sub_rtr, .add_rtr, .adc_rtr => {
-                //const op_str = op.getOpString();
+                const op_str = op.getOpString();
 
-                //try writer.print("{s} ", .{op_str});
+                try writer.print("{s} ", .{op_str});
                 const d = (buf_i & 0b00000010) >> 1;
                 const w = (buf_i & 0b00000001);
                 command.d = d;
@@ -172,23 +176,24 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                 const mod = buf[buf_pos.* + 1] >> 6;
                 command.mod = mod;
                 const reg = (buf[buf_pos.* + 1] >> 3) & 0b00000111;
-                //const reg_str = registers[w * 8 + reg];
+                const reg_str = registers[w * 8 + reg];
                 const rm = buf[buf_pos.* + 1] & 0b00000111;
                 switch (mod) {
 
                     // Register Mode 11
                     0b00000011 => {
-                        //const rm_str = registers[w * 8 + rm];
+                        const rm_str = registers[w * 8 + rm];
 
                         if (d == 1) {
                             command.reg = reg;
                             command.rm = rm;
-                            //try writer.print("{s}, {s}\n", .{ reg_str, rm_str });
+                            try writer.print("{s}, {s}", .{ reg_str, rm_str });
                         } else {
                             command.reg = rm;
                             command.rm = reg;
-                            //try writer.print("{s}, {s}\n", .{ rm_str, reg_str });
+                            try writer.print("{s}, {s}", .{ rm_str, reg_str });
                         }
+                        command.command = writer.buffered();
                         buf_pos.* += 2;
                         return command;
                     },
@@ -198,13 +203,14 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         if (rm != 0b00000110) {
                             const eff_addr = addresses[rm];
                             //TODO:
-                            //if (d == 1) {
-                            //try writer.print("{s}, [{s}]\n", .{ reg_str, eff_addr });
-                            //} else {
-                            //try writer.print("[{s}], {s}\n", .{ eff_addr, reg_str });
-                            //}
+                            if (d == 1) {
+                                try writer.print("{s}, [{s}]", .{ reg_str, eff_addr });
+                            } else {
+                                try writer.print("[{s}], {s}", .{ eff_addr, reg_str });
+                            }
                             command.addr = eff_addr;
                             command.reg = reg;
+                            command.command = writer.buffered();
                             buf_pos.* += 2;
                             return command;
                         } else {
@@ -212,7 +218,8 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             const data_hi: u16 = @intCast(buf[buf_pos.* + 3]);
                             const data: u16 = (data_hi << 8) | data_lo;
                             command.expl_addr = data;
-                            //try writer.print("{s}, [{d}]\n", .{ reg_str, data });
+                            try writer.print("{s}, [{d}]", .{ reg_str, data });
+                            command.command = writer.buffered();
                             buf_pos.* += 4;
                             return command;
                         }
@@ -221,30 +228,33 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                     // Memory Mode 01, 8-bit displacement follows
                     0b00000001 => {
                         const eff_addr = addresses[rm];
-                        const data: i8 = @bitCast(buf[buf_pos.* + 2]);
-                        //const sign = if (data > 0) "+" else "-";
+                        var data: i8 = @bitCast(buf[buf_pos.* + 2]);
+                        const sign = if (data > 0) "+" else "-";
                         var neg = false;
-                        if (data < 0) neg = true;
+                        if (data < 0) {
+                            data *= -1;
+                            neg = true;
+                        }
+
                         command.reg = reg;
                         command.addr = eff_addr;
 
                         if (data == 0) {
-                            //TODO:
-                            //if (d == 1) {
-                            //try writer.print("{s}, [{s}]\n", .{ reg_str, eff_addr });
-                            //} else {
-                            //try writer.print("[{s}], {s}\n", .{ eff_addr, reg_str });
-                            //}
+                            if (d == 1) {
+                                try writer.print("{s}, [{s}]", .{ reg_str, eff_addr });
+                            } else {
+                                try writer.print("[{s}], {s}", .{ eff_addr, reg_str });
+                            }
                         } else {
-                            //TODO:
-                            //if (d == 1) {
-                            //try writer.print("{s}, [{s} {s} {d}]\n", .{ reg_str, eff_addr, sign, data });
-                            //} else {
-                            //try writer.print("[{s} {s} {d}], {s}\n", .{ eff_addr, sign, data, reg_str });
-                            //}
+                            if (d == 1) {
+                                try writer.print("{s}, [{s} {s} {d}]", .{ reg_str, eff_addr, sign, data });
+                            } else {
+                                try writer.print("[{s} {s} {d}], {s}", .{ eff_addr, sign, data, reg_str });
+                            }
                             command.neg_displ = neg;
                             command.displacement = @intCast(buf[buf_pos.* + 2]);
                         }
+                        command.command = writer.buffered();
                         buf_pos.* += 3;
                         return command;
                     },
@@ -256,26 +266,26 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         const data_hi: u16 = @intCast(buf[buf_pos.* + 3]);
                         var data: i16 = @bitCast((data_hi << 8) | data_lo);
                         const neg = if (data >= 0) false else true;
+                        const sign = if (!neg) "+" else "-";
                         if (data < 0) data *= -1;
                         if (data == 0) {
-                            //TODO:
-                            //if (d == 1) {
-                            //try writer.print("{s}, [{s}]\n", .{ reg_str, eff_addr });
-                            //} else {
-                            //try writer.print("[{s}], {s}\n", .{ eff_addr, reg_str });
-                            //}
+                            if (d == 1) {
+                                try writer.print("{s}, [{s}]", .{ reg_str, eff_addr });
+                            } else {
+                                try writer.print("[{s}], {s}", .{ eff_addr, reg_str });
+                            }
                             command.reg = reg;
                             command.addr = eff_addr;
                         } else {
-                            //TODO:
-                            //if (d == 1) {
-                            //try writer.print("{s}, [{s} {s} {d}]\n", .{ reg_str, eff_addr, sign, data });
-                            //} else {
-                            //try writer.print("[{s} {s} {d}], {s}\n", .{ eff_addr, sign, data, reg_str });
-                            //}
+                            if (d == 1) {
+                                try writer.print("{s}, [{s} {s} {d}]", .{ reg_str, eff_addr, sign, data });
+                            } else {
+                                try writer.print("[{s} {s} {d}], {s}", .{ eff_addr, sign, data, reg_str });
+                            }
                             command.neg_displ = neg;
                             command.displacement = (data_hi << 8) | data_lo;
                         }
+                        command.command = writer.buffered();
                         buf_pos.* += 4;
                         return command;
                     },
@@ -286,10 +296,10 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
             // Immediate-to-register/memory
             // mov, add/sub/cmp
             .mov_itm, .arithmetic_itm => {
-                //const op_str = if (op == .mov_itm) "mov" else @tagName(@as(ItmOp, @enumFromInt((buf[buf_pos.* + 1] >> 3) & 0b00000111)));
-                //try writer.print("{s} ", .{op_str});
+                const op_str = if (op == .mov_itm) "mov" else @tagName(@as(ItmOp, @enumFromInt((buf[buf_pos.* + 1] >> 3) & 0b00000111)));
+                try writer.print("{s} ", .{op_str});
                 const w = buf_i & 0b00000001;
-                //const w_keyword = if (w == 1) "word" else "byte";
+                const w_keyword = if (w == 1) "word" else "byte";
                 const s = if (op == .mov_itm) 0 else (buf_i & 0b00000010) >> 1;
                 command.w = w;
                 command.s = s;
@@ -312,10 +322,11 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             } else {
                                 buf_pos.* += 3;
                             }
+                            try writer.print("{s} [{s}], {d}", .{ w_keyword, eff_addr, data });
                             command.data = data;
                             command.addr = eff_addr;
+                            command.command = writer.buffered();
                             return command;
-                            //try writer.print("{s} [{s}], {d}\n", .{ w_keyword, eff_addr, data });
                         } else {
                             const addr_lo: u16 = @intCast(buf[buf_pos.* + 2]);
                             const addr_hi: u16 = @intCast(buf[buf_pos.* + 3]);
@@ -328,16 +339,17 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             } else {
                                 buf_pos.* += 5;
                             }
+                            try writer.print("{s} [{d}], {d}", .{ w_keyword, addr, data });
                             command.data = data;
                             command.expl_addr = addr;
+                            command.command = writer.buffered();
                             return command;
-                            //try writer.print("{s} [{d}], {d}\n", .{ w_keyword, addr, data });
                         }
                     },
 
                     // Register Mode 11 no displacement
                     0b00000011 => {
-                        //const rm_str = registers[w * 8 + rm];
+                        const rm_str = registers[w * 8 + rm];
                         var data: u16 = @intCast(buf[buf_pos.* + 2]);
                         if (s == 0 and w == 1) {
                             const data_hi: u16 = @intCast(buf[buf_pos.* + 3]);
@@ -346,9 +358,10 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         } else {
                             buf_pos.* += 3;
                         }
+                        try writer.print("{s}, {d}", .{ rm_str, data });
                         command.data = data;
+                        command.command = writer.buffered();
                         return command;
-                        //try writer.print("{s}, {d}\n", .{ rm_str, data });
                     },
 
                     // Memory Mode 01, 8-bit displacement follows
@@ -366,7 +379,8 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         } else disp = @bitCast(disp_u16);
 
                         const disp_neg = if (disp >= 0) false else true;
-                        //if (disp < 0) disp *= -1;
+                        const sign = if (!disp_neg) "+" else "-";
+                        if (disp < 0) disp *= -1;
 
                         var data: u16 = @intCast(buf[buf_pos.* + 3]);
                         if (s == 0 and w == 1) {
@@ -376,84 +390,86 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         } else {
                             buf_pos.* += 4;
                         }
-                        //TODO:
-                        //try writer.print("{s} ", .{w_keyword});
+                        try writer.print("{s} ", .{w_keyword});
+                        if (disp == 0) {
+                            try writer.print("[{s}], ", .{eff_addr});
+                        } else {
+                            try writer.print("[{s} {s} {d}], ", .{ eff_addr, sign, disp });
+                        }
+                        try writer.print("{d}", .{data});
 
                         command.addr = eff_addr;
                         command.neg_displ = disp_neg;
                         command.displacement = disp_u16;
                         command.data = data;
+                        command.command = writer.buffered();
                         return command;
-                        //TODO:
-                        //if (disp == 0) {
-                        //try writer.print("[{s}], ", .{eff_addr});
-                        //} else {
-                        //try writer.print("[{s} {s} {d}], ", .{ eff_addr, sign, disp });
-                        //}
-                        //try writer.print("{d}\n", .{data});
                     },
                     else => unreachable,
                 }
             },
             // Immediate to accumulator
             .add_ita, .adc_ita, .cmp_ita, .sub_ita => {
-                //const op_str = op.getOpString();
-                //try writer.print("{s} ", .{op_str});
+                const op_str = op.getOpString();
+                try writer.print("{s} ", .{op_str});
                 const w = buf_i & 0b00000001;
-                //const reg = registers[w * 8];
+                const reg = registers[w * 8];
                 var data: u16 = @intCast(buf[buf_pos.* + 1]);
                 if (w == 1) { //
                     const data_hi: u16 = @intCast(buf[buf_pos.* + 2]);
                     data |= data_hi << 8;
                     buf_pos.* += 1;
                 }
-                buf_pos.* += 2;
+                try writer.print("{s}, {d}", .{ reg, data });
                 command.w = w;
                 command.reg = 0;
                 command.data = data;
+                command.command = writer.buffered();
+                buf_pos.* += 2;
                 return command;
-                //try writer.print("{s}, {d}\n", .{ reg, data });
             },
             .mov_xtra => {
                 // Immediate-to-register OR Memory to accumulator OR Accumulator to memory
                 // mov, sub/cmp, add
                 // Immediate-to-register
-                //const op_str = op.getOpString();
-                //try writer.print("{s} ", .{op_str});
+                const op_str = op.getOpString();
+                try writer.print("{s} ", .{op_str});
                 if (buf_i & 0b00010000 == 0b00010000) {
                     const w = (buf_i >> 3) & 1;
-                    //const reg = registers[w * 8 + (buf_i & 0b00000111)];
+                    const reg = registers[w * 8 + (buf_i & 0b00000111)];
                     command.reg = buf_i & 0b00000111;
                     var data: u16 = undefined;
-                    //try writer.print("{s}, ", .{reg});
+                    try writer.print("{s}, ", .{reg});
                     if (w == 0) {
                         data = @intCast(buf[buf_pos.* + 1]);
-                        //try writer.print("{d}\n", .{data});
+                        try writer.print("{d}", .{data});
                         buf_pos.* += 2;
                     } else {
                         data = @intCast(buf[buf_pos.* + 1]);
                         const data_hi: u16 = @intCast(buf[buf_pos.* + 2]);
                         data |= data_hi << 8;
-                        //try writer.print("{d}\n", .{data});
+                        try writer.print("{d}", .{data});
                         buf_pos.* += 3;
                     }
                     command.data = data;
+                    command.command = writer.buffered();
                     return command;
                 } else { //Accumulator-to-memory or Memory-to-accumulator
                     const w = buf_i & 0b00000001;
                     var addr: u16 = @intCast(buf[buf_pos.* + 1]);
-                    //const reg = registers[w * 8];
+                    const reg = registers[w * 8];
                     command.reg = w * 8;
                     const addr_hi: u16 = @intCast(buf[buf_pos.* + 2]);
                     addr = (addr_hi << 8) | addr;
                     command.expl_addr = addr;
                     if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
                         command.d = 1;
-                        //try writer.print("[{d}], {s}\n", .{ addr, reg });
+                        try writer.print("[{d}], {s}", .{ addr, reg });
                     } else { //Memory-to-accumulator
                         command.d = 0;
-                        //try writer.print("{s}, [{d}]\n", .{ reg, addr });
+                        try writer.print("{s}, [{d}]", .{ reg, addr });
                     }
+                    command.command = writer.buffered();
                     buf_pos.* += 3;
                     return command;
                 }
@@ -461,5 +477,4 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
         }
     }
     return null;
-    //try writer.print("\n", .{});
 }

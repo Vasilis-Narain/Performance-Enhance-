@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
 
             var bytes_consumed: u8 = 0;
             const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);
-            _ = command;
+            try stdout_writer.print("{s}\n", .{command.?.command});
             reader.interface.toss(@min(bytes_consumed, window.len));
         }
         try stdout_writer.print("; Instructions read: {d}\n", .{instructions_read});
