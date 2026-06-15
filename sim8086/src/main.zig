@@ -23,21 +23,40 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface; // Always remember `&`.
 
+    //pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
+    //
     // Opening file
     if (Io.Dir.cwd().openFile(io, filepath, .{
         .mode = .read_only,
         .lock = .exclusive,
     })) |file| {
-        const buf = try arena.alloc(u8, try file.length(io));
-        var reader = file.reader(io, buf);
-        reader.interface.readSliceAll(buf) catch |err| switch (err) {
-            error.ReadFailed => return reader.err.?,
-            else => return err,
-        };
-        file.close(io);
+        defer file.close(io);
+        var buf: [4096]u8 = undefined; // Grab a decent sized 'page' to reduce IO calls
+        // but also being able to handle _large_ files in stack by not loading entire file to
+        // buffer.
+        var reader = file.reader(io, &buf);
+        var instructions_read: u16 = 0;
         try stdout_writer.print("; {s} disassembly:\n", .{filepath});
         try stdout_writer.print("bits 16\n", .{});
-        try sim8086.disassemble(stdout_writer, buf[0..]);
+        while (true) : (instructions_read += 1) {
+            reader.interface.fill(6) catch |err| switch (err) {
+                error.EndOfStream => {},
+                error.ReadFailed => return reader.err.?,
+            };
+
+            const bytes = reader.interface.buffered();
+            if (bytes.len == 0) break;
+
+            const window = bytes[0..@min(6, bytes.len)];
+            var bytes_to_check = [_]u8{0} ** 6; // zero-initialise array we're checking
+            @memcpy(bytes_to_check[0..window.len], window); // This is for edge case where peek return shorter array
+
+            var bytes_consumed: u8 = 0;
+            const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);
+            _ = command;
+            reader.interface.toss(@min(bytes_consumed, window.len));
+        }
+        try stdout_writer.print("; Instructions read: {d}\n", .{instructions_read});
     } else |err| {
         return err;
     }
