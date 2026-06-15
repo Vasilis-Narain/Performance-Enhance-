@@ -77,9 +77,11 @@ const JumpOp = enum(u8) {
     _,
 };
 
-const SimulatorRegisters = struct {
-    registers: [8]u8 = .{0} ** 8,
-    const Registers = enum(u8) {
+pub const SimulatorRegisters = struct {
+    printBuf: [64]u8 = undefined,
+    printString: []const u8 = &.{},
+    registers: [8]u16 = .{0} ** 8,
+    pub const Registers = enum(u8) {
         ax,
         bx,
         cs,
@@ -89,11 +91,50 @@ const SimulatorRegisters = struct {
         si,
         di,
     };
-    pub fn getRegisterVal(self: @This(), register: Registers) void {
+    pub fn getRegisterVal(self: @This(), register: Registers) u16 {
         return self.registers[@intFromEnum(register)];
     }
-    pub fn updateRegister(self: *@This(), register: Registers, new_val: u8) void {
+    pub fn updateRegister(self: *@This(), register: Registers, new_val: u16) void {
         self.registers[@intFromEnum(register)] = new_val;
+    }
+    pub fn execute(self: *@This(), command: *const Command) !void {
+        var writer = Io.Writer.fixed(&self.printBuf);
+        if (command.jump_op) |jmp_op| {
+            _ = jmp_op;
+            return;
+        }
+        if (command.partial_opcode) |partial_opcode| {
+            switch (partial_opcode) {
+                .mov_xtra => {
+                    const prev_data = self.getRegisterVal(.ax);
+                    self.updateRegister(.ax, command.data.?);
+                    try writer.print("; ax:0x{x:0>4}->0x{x:0>4}", .{ prev_data, self.getRegisterVal(.ax) });
+                    self.printString = writer.buffered();
+                },
+                else => return,
+            }
+        }
+    }
+    pub fn resetBuffers(self: *@This()) void {
+        self.printBuf = undefined;
+        self.printString = &.{};
+    }
+
+    pub fn printRegisters(self: @This(), writer: *Io.Writer) !void {
+        try writer.print("\nFinal registers:\n", .{});
+        var i: u8 = 0;
+        while (i < @typeInfo(Registers).@"enum".fields.len) : (i += 1) {
+            const reg: Registers = @enumFromInt(i);
+            const data: u16 = self.getRegisterVal(reg);
+            try writer.print(
+                "    {s}: 0x{x:0>4} ({d})\n",
+                .{
+                    @tagName(reg),
+                    data,
+                    data,
+                },
+            );
+        }
     }
 };
 
