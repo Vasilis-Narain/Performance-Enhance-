@@ -195,16 +195,10 @@ const Command = struct {
     command: []const u8 = &.{},
 };
 
-/// Disassemble 8086 machine code. All `movs` considered (well not quite, but almost).
-/// Should handle all edge cases atm (listing_0040_challenge_movs.asm updated to reflect them)
-/// And also add sub cmp and jumps
-///
-/// Is it pretty? No. Is it extendable? Probably not. Does it work? Well, it passes the test.
-///
 /// See `main.zig` for file load and various initializations.
 /// Input:
-///     writer: *Io.Writer -> zig way to print to stdout
 ///     buf: []u8 -> byte buffer
+///     buf_pos: *u8 -> reference holding how many bytes processed (starts at 0)
 ///
 /// Sample bit instruction:
 ///
