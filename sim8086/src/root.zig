@@ -45,6 +45,30 @@ const Op = enum(u8) {
         };
     }
 };
+//.mov_xtra => {
+//// Immediate-to-register OR Memory to accumulator OR Accumulator to memory
+//// mov, sub/cmp, add
+//// Immediate-to-register
+///
+//if (buf_i & 0b00010000 == 0b00010000) { immediate to register
+//if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
+//} else { //Memory-to-accumulator
+//
+const movXtraType = enum(u8) {
+    itr, // immediate-to-register
+    atm, // accumulator-to-memory
+    mta, // memory-to-accumulator
+    //
+    pub fn init(buf_i: u8) @This() {
+        if (buf_i & 0b00010000 == 0b00010000) { //immediate to register
+            return .itr;
+        }
+        if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
+            return .atm;
+        }
+        return .mta;
+    }
+};
 
 const ItmOp = enum(u8) {
     add = 0b00000000,
@@ -81,10 +105,11 @@ pub const SimulatorRegisters = struct {
     printBuf: [64]u8 = undefined,
     printString: []const u8 = &.{},
     registers: [8]u16 = .{0} ** 8,
+
     pub const Registers = enum(u8) {
         ax,
         bx,
-        cs,
+        cx,
         dx,
         sp,
         bp,
@@ -106,10 +131,21 @@ pub const SimulatorRegisters = struct {
         if (command.partial_opcode) |partial_opcode| {
             switch (partial_opcode) {
                 .mov_xtra => {
-                    const prev_data = self.getRegisterVal(.ax);
-                    self.updateRegister(.ax, command.data.?);
-                    try writer.print("; ax:0x{x:0>4}->0x{x:0>4}", .{ prev_data, self.getRegisterVal(.ax) });
-                    self.printString = writer.buffered();
+                    const mov_type = command.mov_xtra_type.?;
+                    const diff: u8 = if (command.w.? == 1) 0 else 8;
+                    const reg_16 = command.reg.? + diff;
+                    const reg = std.meta.stringToEnum(Registers, registers[reg_16]).?;
+
+                    switch (mov_type) {
+                        .itr => {
+                            const prev_data = self.getRegisterVal(reg);
+                            self.updateRegister(reg, command.data.?);
+                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            self.printString = writer.buffered();
+                        },
+                        .atm => {},
+                        .mta => {},
+                    }
                 },
                 else => return,
             }
@@ -150,6 +186,7 @@ const Command = struct {
     mod: ?u8 = null,
     displacement: ?u16 = null,
     neg_displ: ?bool = null,
+    mov_xtra_type: ?movXtraType = null,
     d: ?u8 = null,
     w: ?u8 = null,
     s: ?u8 = null,
@@ -475,47 +512,67 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                 // Immediate-to-register
                 const op_str = op.getOpString();
                 try writer.print("{s} ", .{op_str});
-                if (buf_i & 0b00010000 == 0b00010000) {
-                    const w = (buf_i >> 3) & 1;
-                    const reg = registers[w * 8 + (buf_i & 0b00000111)];
-                    command.reg = buf_i & 0b00000111;
-                    var data: u16 = undefined;
-                    try writer.print("{s}, ", .{reg});
-                    if (w == 0) {
-                        data = @intCast(buf[buf_pos.* + 1]);
-                        try writer.print("{d}", .{data});
-                        buf_pos.* += 2;
-                    } else {
-                        data = @intCast(buf[buf_pos.* + 1]);
-                        const data_hi: u16 = @intCast(buf[buf_pos.* + 2]);
-                        data |= data_hi << 8;
-                        try writer.print("{d}", .{data});
-                        buf_pos.* += 3;
-                    }
-                    command.data = data;
-                    command.command = writer.buffered();
-                    return command;
-                } else { //Accumulator-to-memory or Memory-to-accumulator
-                    const w = buf_i & 0b00000001;
-                    var addr: u16 = @intCast(buf[buf_pos.* + 1]);
-                    const reg = registers[w * 8];
-                    command.reg = w * 8;
-                    const addr_hi: u16 = @intCast(buf[buf_pos.* + 2]);
-                    addr = (addr_hi << 8) | addr;
-                    command.expl_addr = addr;
-                    if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
+                command.mov_xtra_type = .init(buf_i);
+                switch (command.mov_xtra_type.?) {
+                    //if (buf_i & 0b00010000 == 0b00010000) {
+                    .itr => {
+                        const w = (buf_i >> 3) & 1;
+                        command.w = w;
+                        const reg = registers[w * 8 + (buf_i & 0b00000111)];
+                        command.reg = w * 8 + (buf_i & 0b00000111);
+                        var data: u16 = undefined;
+                        try writer.print("{s}, ", .{reg});
+                        if (w == 0) {
+                            data = @intCast(buf[buf_pos.* + 1]);
+                            try writer.print("{d}", .{data});
+                            buf_pos.* += 2;
+                        } else {
+                            data = @intCast(buf[buf_pos.* + 1]);
+                            const data_hi: u16 = @intCast(buf[buf_pos.* + 2]);
+                            data |= data_hi << 8;
+                            try writer.print("{d}", .{data});
+                            buf_pos.* += 3;
+                        }
+                        command.data = data;
+                        command.command = writer.buffered();
+                        return command;
+                    }, //else { //Accumulator-to-memory or Memory-to-accumulator
+
+                    .atm => {
+                        const w = buf_i & 0b00000001;
+                        command.w = w;
+                        var addr: u16 = @intCast(buf[buf_pos.* + 1]);
+                        const reg = registers[w * 8];
+                        command.reg = w * 8;
+                        const addr_hi: u16 = @intCast(buf[buf_pos.* + 2]);
+                        addr = (addr_hi << 8) | addr;
+                        command.expl_addr = addr;
+                        //if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
                         command.d = 1;
                         try writer.print("[{d}], {s}", .{ addr, reg });
-                    } else { //Memory-to-accumulator
+                        command.command = writer.buffered();
+                        buf_pos.* += 3;
+                        return command;
+                    }, //else { //Memory-to-accumulator
+                    .mta => {
+                        const w = buf_i & 0b00000001;
+                        command.w = w;
+                        var addr: u16 = @intCast(buf[buf_pos.* + 1]);
+                        const reg = registers[w * 8];
+                        command.reg = w * 8;
+                        const addr_hi: u16 = @intCast(buf[buf_pos.* + 2]);
+                        addr = (addr_hi << 8) | addr;
+                        command.expl_addr = addr;
                         command.d = 0;
                         try writer.print("{s}, [{d}]", .{ reg, addr });
-                    }
-                    command.command = writer.buffered();
-                    buf_pos.* += 3;
-                    return command;
+                        command.command = writer.buffered();
+                        buf_pos.* += 3;
+                        return command;
+                    },
                 }
             },
         }
     }
+
     return null;
 }
