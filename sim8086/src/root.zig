@@ -153,6 +153,44 @@ pub const SimulatorRegisters = struct {
         }
         if (command.partial_opcode) |partial_opcode| {
             switch (partial_opcode) {
+                .mov_rtr => {
+                    const diff: u8 = if (command.w.? == 1) 0 else 8;
+                    var reg_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    const mod = command.mod.?;
+                    switch (mod) {
+                        0b00000011 => {
+                            var reg_lo: bool = true;
+                            var rm_lo: bool = true;
+                            var rm_8: Registers_8bit = undefined;
+                            var rm: Registers = undefined;
+                            if (diff > 0) {
+                                reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                                reg = reg_8.getRegister16bit();
+                                rm = rm_8.getRegister16bit();
+                                if (@intFromEnum(reg_8) < 4) {
+                                    reg_lo = false;
+                                }
+                                if (@intFromEnum(rm_8) < 4) {
+                                    rm_lo = false;
+                                }
+                            } else {
+                                reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                                rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                            }
+                            const prev_data = self.getRegisterVal(reg);
+                            var data: u16 = self.getRegisterVal(rm);
+                            if (!rm_lo) {
+                                data >>= 8;
+                            }
+                            self.updateRegister(reg, data, reg_lo);
+                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            self.printString = writer.buffered();
+                        },
+                        else => {},
+                    }
+                },
                 .mov_xtra => {
                     const mov_type = command.mov_xtra_type.?;
                     const diff: u8 = if (command.w.? == 1) 0 else 8;
@@ -290,12 +328,12 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         const rm_str = registers[w * 8 + rm];
 
                         if (d == 1) {
-                            command.reg = reg;
-                            command.rm = rm;
+                            command.reg = reg + w * 8;
+                            command.rm = rm + w * 8;
                             try writer.print("{s}, {s}", .{ reg_str, rm_str });
                         } else {
-                            command.reg = rm;
-                            command.rm = reg;
+                            command.reg = rm + w * 8;
+                            command.rm = reg + w * 8;
                             try writer.print("{s}, {s}", .{ rm_str, reg_str });
                         }
                         command.command = writer.buffered();
