@@ -1,2 +1,9 @@
 // raddbg 0.9.27 project file
 
+target:
+{
+  executable: "../zig-out/bin/sim8086.exe"
+  arguments: "-exec input/listing_0044_register_movs"
+  enabled: 1
+  working_directory: "../../sim8086"
+}

@@ -116,11 +116,34 @@ pub const SimulatorRegisters = struct {
         si,
         di,
     };
+    pub const Registers_8bit = enum(u8) {
+        ah,
+        bh,
+        ch,
+        dh,
+        al,
+        bl,
+        cl,
+        dl,
+
+        pub fn getRegister16bit(self: @This()) Registers {
+            return switch (self) {
+                .ah, .al => .ax,
+                .bh, .bl => .bx,
+                .ch, .cl => .cx,
+                .dh, .dl => .dx,
+            };
+        }
+    };
     pub fn getRegisterVal(self: @This(), register: Registers) u16 {
         return self.registers[@intFromEnum(register)];
     }
-    pub fn updateRegister(self: *@This(), register: Registers, new_val: u16) void {
-        self.registers[@intFromEnum(register)] = new_val;
+    pub fn updateRegister(self: *@This(), register: Registers, new_val: u16, is_lo: bool) void {
+        if (is_lo) {
+            self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0xFF00) | new_val;
+        } else {
+            self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0x00FF) | (new_val << 8);
+        }
     }
     pub fn execute(self: *@This(), command: *const Command) !void {
         var writer = Io.Writer.fixed(&self.printBuf);
@@ -133,13 +156,23 @@ pub const SimulatorRegisters = struct {
                 .mov_xtra => {
                     const mov_type = command.mov_xtra_type.?;
                     const diff: u8 = if (command.w.? == 1) 0 else 8;
-                    const reg_16 = command.reg.? + diff;
-                    const reg = std.meta.stringToEnum(Registers, registers[reg_16]).?;
+                    var reg_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    var is_lo: bool = true;
+                    if (diff > 0) {
+                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                        reg = reg_8.getRegister16bit();
+                        if (@intFromEnum(reg_8) < 4) {
+                            is_lo = false;
+                        }
+                    } else {
+                        reg = std.meta.stringToEnum(Registers, registers[command.reg.? + diff]).?;
+                    }
 
                     switch (mov_type) {
                         .itr => {
                             const prev_data = self.getRegisterVal(reg);
-                            self.updateRegister(reg, command.data.?);
+                            self.updateRegister(reg, command.data.?, is_lo);
                             try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             self.printString = writer.buffered();
                         },
