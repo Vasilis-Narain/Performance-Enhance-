@@ -15,9 +15,14 @@ pub fn main(init: std.process.Init) !void {
     }
     var filepath: [:0]const u8 = undefined;
     var execute: bool = false;
-    if (args.len == 3 and std.mem.eql(u8, args[1], "-exec")) {
-        filepath = args[2];
-        execute = true;
+    if (args.len == 3) {
+        if (std.mem.eql(u8, args[1], "-exec")) {
+            filepath = args[2];
+            execute = true;
+        } else {
+            std.debug.print("!{s} argument not recognized!\n", .{args[1]});
+            return error.InvalidCall;
+        }
     } else {
         filepath = args[1];
     }
@@ -30,8 +35,6 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface; // Always remember `&`.
 
-    //pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
-    //
     // Opening file
     if (Io.Dir.cwd().openFile(io, filepath, .{
         .mode = .read_only,
@@ -40,9 +43,7 @@ pub fn main(init: std.process.Init) !void {
         defer file.close(io);
         var simRegisters: sim8086.SimulatorRegisters = .{};
         var buf: [4096]u8 = undefined; // Grab a decent sized 'page' to reduce IO calls
-        // but also being able to handle _large_ files in stack by not loading entire file to
-        // buffer.
-        var reader = file.reader(io, &buf);
+        var reader = file.reader(io, &buf); //zig magic... this thing has pointers internally to know when to grab a new page: Magic.
         var instructions_read: u16 = 0;
         if (execute) {
             try stdout_writer.print("\n--- {s} execution ---\n", .{filepath});
@@ -60,8 +61,10 @@ pub fn main(init: std.process.Init) !void {
             if (bytes.len == 0) break;
 
             const window = bytes[0..@min(6, bytes.len)];
-            var bytes_to_check = [_]u8{0} ** 6; // zero-initialise array we're checking
-            @memcpy(bytes_to_check[0..window.len], window); // This is for edge case where peek return shorter array
+
+            // This is for edge case where peek return shorter array
+            var bytes_to_check = [_]u8{0} ** 6;
+            @memcpy(bytes_to_check[0..window.len], window);
 
             var bytes_consumed: u8 = 0;
             const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);

@@ -104,7 +104,7 @@ const JumpOp = enum(u8) {
 pub const SimulatorRegisters = struct {
     printBuf: [64]u8 = undefined,
     printString: []const u8 = &.{},
-    registers: [8]u16 = .{0} ** 8,
+    registers: [9]u16 = .{0} ** 9,
 
     pub const Registers = enum(u8) {
         ax,
@@ -115,6 +115,7 @@ pub const SimulatorRegisters = struct {
         bp,
         si,
         di,
+        flags,
     };
     pub const Registers_8bit = enum(u8) {
         ah,
@@ -135,9 +136,19 @@ pub const SimulatorRegisters = struct {
             };
         }
     };
+
+    pub fn setZeroFlag(self: *@This(), val: bool) void {
+        self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~@as(u16, (1 << 6))) | (@as(u16, @intFromBool(val)) << 6);
+    }
+
+    pub fn setSignFlag(self: *@This(), val: bool) void {
+        self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~@as(u16, (1 << 7))) | (@as(u16, @intFromBool(val)) << 7);
+    }
+
     pub fn getRegisterVal(self: @This(), register: Registers) u16 {
         return self.registers[@intFromEnum(register)];
     }
+
     pub fn updateRegister(self: *@This(), register: Registers, new_val: u16, is_lo: bool) void {
         if (is_lo) {
             self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0xFF00) | new_val;
@@ -145,6 +156,7 @@ pub const SimulatorRegisters = struct {
             self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0x00FF) | (new_val << 8);
         }
     }
+
     pub fn execute(self: *@This(), command: *const Command) !void {
         var writer = Io.Writer.fixed(&self.printBuf);
         if (command.jump_op) |jmp_op| {
@@ -158,6 +170,8 @@ pub const SimulatorRegisters = struct {
                     var reg_8: Registers_8bit = undefined;
                     var reg: Registers = undefined;
                     const mod = command.mod.?;
+                    self.setSignFlag(true);
+                    self.setZeroFlag(true);
                     switch (mod) {
                         0b00000011 => {
                             var reg_lo: bool = true;
@@ -222,6 +236,7 @@ pub const SimulatorRegisters = struct {
             }
         }
     }
+
     pub fn resetBuffers(self: *@This()) void {
         self.printBuf = undefined;
         self.printString = &.{};
