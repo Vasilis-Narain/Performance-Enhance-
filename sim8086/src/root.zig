@@ -186,11 +186,11 @@ pub const SimulatorRegisters = struct {
 
     pub fn updateRegister(self: *@This(), register: Registers, new_val: u16, reg_type: RegType) void {
         // Disp derived from 0th bit of reg_type: only .hi has it set.
-        const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3;
+        const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3; // NOTE: this shit = 8 bruh
         self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & @intFromEnum(reg_type)) | (new_val << disp);
     }
     pub fn addToRegister(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) void {
-        //const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3;
+        const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3; // NOTE: yep, still 8
         const reg_val = self.registers[@intFromEnum(register)];
         const rhs_sflag = switch (val_type) {
             .hi, .full => (new_val & 0x8000) == 0x8000,
@@ -202,7 +202,7 @@ pub const SimulatorRegisters = struct {
         switch (reg_type) {
             .hi, .full => {
                 lhs_sflag = (reg_val & 0x8000) == 0x8000;
-                sum = reg_val +% new_val;
+                sum = (reg_val & ~@intFromEnum(reg_type) >> disp) +% new_val;
                 sum_sflag = (sum & 0x8000) == 0x8000;
             },
             .lo => {
@@ -216,6 +216,7 @@ pub const SimulatorRegisters = struct {
         self.setFlag(.O, (lhs_sflag == rhs_sflag) and (lhs_sflag != sum_sflag));
         self.setFlag(.C, sum < new_val);
         self.setFlag(.Z, sum == 0);
+        self.updateRegister(register, sum, reg_type);
     }
 
     pub fn execute(self: *@This(), command: *const Command) !void {
