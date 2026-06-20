@@ -45,15 +45,7 @@ const Op = enum(u8) {
         };
     }
 };
-//.mov_xtra => {
-//// Immediate-to-register OR Memory to accumulator OR Accumulator to memory
-//// mov, sub/cmp, add
-//// Immediate-to-register
-///
-//if (buf_i & 0b00010000 == 0b00010000) { immediate to register
-//if (buf_i & 0b00000010 == 0b00000010) { // Accumulator-to-memory
-//} else { //Memory-to-accumulator
-//
+
 const movXtraType = enum(u8) {
     itr, // immediate-to-register
     atm, // accumulator-to-memory
@@ -137,24 +129,93 @@ pub const SimulatorRegisters = struct {
         }
     };
 
-    pub fn setZeroFlag(self: *@This(), val: bool) void {
-        self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~@as(u16, (1 << 6))) | (@as(u16, @intFromBool(val)) << 6);
+    const RegType = enum(u16) { lo = 0xFF00, hi = 0x00FF, full = 0x0000 };
+
+    const Flags = enum(u4) {
+        // Just add more here if needed (none more are needed, not all shall be implemented)
+        C = 0,
+        P = 2,
+        A = 4,
+        Z = 6,
+        S = 7,
+        T = 8,
+        I = 9,
+        D = 10,
+        O = 11,
+    };
+
+    pub fn setFlag(self: *@This(), flag: Flags, val: bool) void {
+        const flag_u: u4 = @intFromEnum(flag);
+        self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~(@as(u16, 1) << flag_u)) | (@as(u16, @intFromBool(val)) << flag_u);
     }
 
-    pub fn setSignFlag(self: *@This(), val: bool) void {
-        self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~@as(u16, (1 << 7))) | (@as(u16, @intFromBool(val)) << 7);
+    pub fn isSetFlag(self: @This(), i: u4) bool {
+        return (self.getRegisterVal(.flags) >> i) & 1 == 1;
+    }
+
+    pub fn printRegisters(self: @This(), writer: *Io.Writer) !void {
+        try writer.print("\nFinal registers:\n", .{});
+        var i: u8 = 0;
+        while (i < @typeInfo(Registers).@"enum".fields.len - 1) : (i += 1) {
+            const reg: Registers = @enumFromInt(i);
+            const data: u16 = self.getRegisterVal(reg);
+            try writer.print(
+                "    {s}: 0x{x:0>4} ({d})\n",
+                .{
+                    @tagName(reg),
+                    data,
+                    data,
+                },
+            );
+        }
+        const flags = self.getRegisterVal(.flags);
+        try writer.print("\nFlags: |{b:0>8}|{b:0>8}| (", .{ (flags & 0xFF00) >> 8, flags & 0xFF });
+        try self.printSetFlags(writer);
+        try writer.print(")\n", .{});
+    }
+
+    pub fn printSetFlags(self: @This(), writer: *Io.Writer) !void {
+        inline for (@typeInfo(Flags).@"enum".fields) |flag| {
+            if (self.isSetFlag(flag.value)) try writer.print("{s}", .{flag.name});
+        }
     }
 
     pub fn getRegisterVal(self: @This(), register: Registers) u16 {
         return self.registers[@intFromEnum(register)];
     }
 
-    pub fn updateRegister(self: *@This(), register: Registers, new_val: u16, is_lo: bool) void {
-        if (is_lo) {
-            self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0xFF00) | new_val;
-        } else {
-            self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & 0x00FF) | (new_val << 8);
+    pub fn updateRegister(self: *@This(), register: Registers, new_val: u16, reg_type: RegType) void {
+        // Disp derived from 0th bit of reg_type: only .hi has it set.
+        const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3;
+        self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & @intFromEnum(reg_type)) | (new_val << disp);
+    }
+    pub fn addToRegister(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) void {
+        //const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3;
+        const reg_val = self.registers[@intFromEnum(register)];
+        const rhs_sflag = switch (val_type) {
+            .hi, .full => (new_val & 0x8000) == 0x8000,
+            .lo => (new_val & 0x80) == 0x80,
+        };
+        var lhs_sflag: bool = undefined;
+        var sum: u16 = undefined;
+        var sum_sflag: bool = undefined;
+        switch (reg_type) {
+            .hi, .full => {
+                lhs_sflag = (reg_val & 0x8000) == 0x8000;
+                sum = reg_val +% new_val;
+                sum_sflag = (sum & 0x8000) == 0x8000;
+            },
+            .lo => {
+                lhs_sflag = (reg_val & 0x80) == 0x80;
+                const sum_8bit: u8 = @as(u8, @truncate(reg_val)) +% @as(u8, @truncate(new_val));
+                sum_sflag = (sum_8bit & 0x80) == 0x80;
+                sum = @intCast(sum_8bit);
+            },
         }
+        self.setFlag(.S, sum_sflag);
+        self.setFlag(.O, (lhs_sflag == rhs_sflag) and (lhs_sflag != sum_sflag));
+        self.setFlag(.C, sum < new_val);
+        self.setFlag(.Z, sum == 0);
     }
 
     pub fn execute(self: *@This(), command: *const Command) !void {
@@ -170,12 +231,10 @@ pub const SimulatorRegisters = struct {
                     var reg_8: Registers_8bit = undefined;
                     var reg: Registers = undefined;
                     const mod = command.mod.?;
-                    self.setSignFlag(true);
-                    self.setZeroFlag(true);
                     switch (mod) {
                         0b00000011 => {
-                            var reg_lo: bool = true;
-                            var rm_lo: bool = true;
+                            var reg_type: RegType = .full;
+                            var rm_type: RegType = .full;
                             var rm_8: Registers_8bit = undefined;
                             var rm: Registers = undefined;
                             if (diff > 0) {
@@ -184,21 +243,21 @@ pub const SimulatorRegisters = struct {
                                 reg = reg_8.getRegister16bit();
                                 rm = rm_8.getRegister16bit();
                                 if (@intFromEnum(reg_8) < 4) {
-                                    reg_lo = false;
-                                }
+                                    reg_type = .hi;
+                                } else reg_type = .lo;
                                 if (@intFromEnum(rm_8) < 4) {
-                                    rm_lo = false;
-                                }
+                                    rm_type = .hi;
+                                } else rm_type = .lo;
                             } else {
                                 reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
                                 rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
                             }
                             const prev_data = self.getRegisterVal(reg);
                             var data: u16 = self.getRegisterVal(rm);
-                            if (!rm_lo) {
+                            if (rm_type == .hi) {
                                 data >>= 8;
                             }
-                            self.updateRegister(reg, data, reg_lo);
+                            self.updateRegister(reg, data, reg_type);
                             try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             self.printString = writer.buffered();
                         },
@@ -210,13 +269,13 @@ pub const SimulatorRegisters = struct {
                     const diff: u8 = if (command.w.? == 1) 0 else 8;
                     var reg_8: Registers_8bit = undefined;
                     var reg: Registers = undefined;
-                    var is_lo: bool = true;
+                    var reg_type: RegType = .full;
                     if (diff > 0) {
                         reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
                         reg = reg_8.getRegister16bit();
                         if (@intFromEnum(reg_8) < 4) {
-                            is_lo = false;
-                        }
+                            reg_type = .hi;
+                        } else reg_type = .lo;
                     } else {
                         reg = std.meta.stringToEnum(Registers, registers[command.reg.? + diff]).?;
                     }
@@ -224,7 +283,7 @@ pub const SimulatorRegisters = struct {
                     switch (mov_type) {
                         .itr => {
                             const prev_data = self.getRegisterVal(reg);
-                            self.updateRegister(reg, command.data.?, is_lo);
+                            self.updateRegister(reg, command.data.?, reg_type);
                             try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             self.printString = writer.buffered();
                         },
@@ -240,23 +299,6 @@ pub const SimulatorRegisters = struct {
     pub fn resetBuffers(self: *@This()) void {
         self.printBuf = undefined;
         self.printString = &.{};
-    }
-
-    pub fn printRegisters(self: @This(), writer: *Io.Writer) !void {
-        try writer.print("\nFinal registers:\n", .{});
-        var i: u8 = 0;
-        while (i < @typeInfo(Registers).@"enum".fields.len) : (i += 1) {
-            const reg: Registers = @enumFromInt(i);
-            const data: u16 = self.getRegisterVal(reg);
-            try writer.print(
-                "    {s}: 0x{x:0>4} ({d})\n",
-                .{
-                    @tagName(reg),
-                    data,
-                    data,
-                },
-            );
-        }
     }
 };
 
