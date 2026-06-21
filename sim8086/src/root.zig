@@ -206,7 +206,7 @@ pub const SimulatorRegisters = struct {
                 sum_sflag = (sum & 0x8000) == 0x8000;
             },
             .hi, .lo => {
-                lhs_sflag = (reg_val & (0x80 << disp)) == 0x80 << disp;
+                lhs_sflag = (reg_val & (@as(u16, @intCast(0x80)) << disp)) == @as(u16, @intCast(0x80)) << disp;
                 const sum_8bit: u8 = @as(u8, @truncate(reg_val >> disp)) +% @as(u8, @truncate(new_val));
                 sum_sflag = (sum_8bit & 0x80) == 0x80;
                 sum = @as(u16, @intCast(sum_8bit)) << disp;
@@ -290,6 +290,39 @@ pub const SimulatorRegisters = struct {
                         },
                         .atm => {},
                         .mta => {},
+                    }
+                },
+                .arithmetic_itm => {
+                    //const ItmOp = enum(u8) {
+                    //add = 0b00000000,
+                    //adc = 0b00000010,
+                    //sub = 0b00000101,
+                    //cmp = 0b00000111,
+                    //};
+                    switch (command.itm_op.?) {
+                        .add => {
+                            const is_wide_reg = command.w.? == 1;
+                            const is_wide_data: RegType = if (is_wide_reg and command.s.? == 0) .full else .lo;
+                            const diff: u8 = if (is_wide_reg) 0 else 8;
+                            var reg_8: Registers_8bit = undefined;
+                            var reg: Registers = undefined;
+                            var reg_type: RegType = .full;
+                            if (diff > 0) {
+                                reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                reg = reg_8.getRegister16bit();
+                                if (@intFromEnum(reg_8) < 4) {
+                                    reg_type = .hi;
+                                } else reg_type = .lo;
+                            } else {
+                                reg = std.meta.stringToEnum(Registers, registers[command.reg.? + 8]).?;
+                            }
+                            const prev_data = self.getRegisterVal(reg);
+                            self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
+                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try self.printSetFlags(&writer);
+                            self.printString = writer.buffered();
+                        },
+                        else => unreachable,
                     }
                 },
                 else => return,
@@ -497,7 +530,9 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
             // Immediate-to-register/memory
             // mov, add/sub/cmp
             .mov_itm, .arithmetic_itm => {
-                const op_str = if (op == .mov_itm) "mov" else @tagName(@as(ItmOp, @enumFromInt((buf[buf_pos.* + 1] >> 3) & 0b00000111)));
+                const itm_op: ItmOp = @enumFromInt((buf[buf_pos.* + 1] >> 3) & 0b00000111);
+                command.itm_op = itm_op;
+                const op_str = if (op == .mov_itm) "mov" else @tagName(itm_op);
                 try writer.print("{s} ", .{op_str});
                 const w = buf_i & 0b00000001;
                 const w_keyword = if (w == 1) "word" else "byte";
@@ -560,6 +595,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             buf_pos.* += 3;
                         }
                         try writer.print("{s}, {d}", .{ rm_str, data });
+                        command.reg = rm;
                         command.data = data;
                         command.command = writer.buffered();
                         return command;
