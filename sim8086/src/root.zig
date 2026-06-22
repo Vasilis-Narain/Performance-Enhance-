@@ -2,6 +2,22 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
 
+// Build comptime lookup table for bit counts 8 bit reg
+// for parity flag.
+fn buildBitCountTable8bit() [256]u8 {
+    var table: [256]u8 = undefined;
+    table[0] = 0;
+    table[1] = 1;
+    for (2..256) |i| {
+        table[i] = table[i >> 1] + @as(u8, @intCast(i & 1));
+    }
+    return table;
+}
+
+// Don't need `comptime` keyword cause we GLOBAL (i.e. already comptime computed)
+// Just do BitCountTable8bit[int n] to find how many bits are set for a given number (upto 255)
+const BitCountTable8bit = buildBitCountTable8bit();
+
 // Flat array to index registers via w * 8 + reg (or r/m)
 const registers: [16][]const u8 = [_][]const u8{ "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh", "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
 
@@ -212,11 +228,55 @@ pub const SimulatorRegisters = struct {
                 sum = @as(u16, @intCast(sum_8bit)) << disp;
             },
         }
+        sum &= ~@intFromEnum(val_type);
+        const parity = BitCountTable8bit[(sum & 0xFF)] % 2 == 0;
         self.setFlag(.S, sum_sflag);
         self.setFlag(.O, (lhs_sflag == rhs_sflag) and (lhs_sflag != sum_sflag));
         self.setFlag(.C, sum < new_val);
         self.setFlag(.Z, sum == 0);
+        self.setFlag(.P, parity);
         self.updateRegister(register, sum, reg_type);
+    }
+
+    fn sub(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) u16 {
+        const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3; // NOTE: yep, still 8 (or 0)
+        var reg_val = self.registers[@intFromEnum(register)];
+        const rhs_sflag = switch (val_type) {
+            .hi, .full => (new_val & 0x8000) == 0x8000,
+            .lo => (new_val & 0x80) == 0x80,
+        };
+        var lhs_sflag: bool = undefined;
+        var diff: u16 = undefined;
+        var diff_sflag: bool = undefined;
+        switch (reg_type) {
+            .full => {
+                lhs_sflag = (reg_val & 0x8000) == 0x8000;
+                diff = reg_val -% new_val;
+                diff_sflag = (diff & 0x8000) == 0x8000;
+            },
+            .hi, .lo => {
+                lhs_sflag = (reg_val & (@as(u16, @intCast(0x80)) << disp)) == @as(u16, @intCast(0x80)) << disp;
+                reg_val >>= disp;
+                const diff_8bit: u8 = @as(u8, @truncate(reg_val)) -% @as(u8, @truncate(new_val));
+                diff_sflag = (diff_8bit & 0x80) == 0x80;
+                diff = @as(u16, @intCast(diff_8bit)) << disp;
+            },
+        }
+        diff &= ~@intFromEnum(val_type);
+        const parity = BitCountTable8bit[(diff & 0xFF)] % 2 == 0;
+        self.setFlag(.S, diff_sflag);
+        self.setFlag(.O, (lhs_sflag != rhs_sflag) and (lhs_sflag != diff_sflag));
+        self.setFlag(.C, reg_val < new_val);
+        self.setFlag(.Z, diff == 0);
+        self.setFlag(.P, parity);
+        return diff;
+    }
+
+    pub fn subToRegister(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) void {
+        self.registers[@intFromEnum(register)] = self.sub(register, reg_type, new_val, val_type);
+    }
+    pub fn cmp(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) void {
+        _ = self.sub(register, reg_type, new_val, val_type);
     }
 
     pub fn execute(self: *@This(), command: *const Command) !void {
@@ -292,6 +352,89 @@ pub const SimulatorRegisters = struct {
                         .mta => {},
                     }
                 },
+                .add_rtr => {
+                    const is_wide_reg = command.w.? == 1;
+                    const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
+                    const diff: u8 = if (is_wide_reg) 0 else 8;
+                    var reg_8: Registers_8bit = undefined;
+                    var rm_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    var rm: Registers = undefined;
+                    var reg_type: RegType = .full;
+                    if (diff > 0) {
+                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                        rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                        reg = reg_8.getRegister16bit();
+                        rm = reg_8.getRegister16bit();
+                        if (@intFromEnum(reg_8) < 4) {
+                            reg_type = .hi;
+                        } else reg_type = .lo;
+                    } else {
+                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                        rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                    }
+                    const prev_data = self.getRegisterVal(reg);
+                    const addition_data = self.getRegisterVal(rm);
+                    self.addToRegister(reg, reg_type, addition_data, is_wide_data);
+                    try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try self.printSetFlags(&writer);
+                    self.printString = writer.buffered();
+                },
+                .sub_rtr => {
+                    const is_wide_reg = command.w.? == 1;
+                    const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
+                    const diff: u8 = if (is_wide_reg) 0 else 8;
+                    var reg_8: Registers_8bit = undefined;
+                    var rm_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    var rm: Registers = undefined;
+                    var reg_type: RegType = .full;
+                    if (diff > 0) {
+                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                        rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                        reg = reg_8.getRegister16bit();
+                        rm = reg_8.getRegister16bit();
+                        if (@intFromEnum(reg_8) < 4) {
+                            reg_type = .hi;
+                        } else reg_type = .lo;
+                    } else {
+                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                        rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                    }
+                    const prev_data = self.getRegisterVal(reg);
+                    const subtraction_data = self.getRegisterVal(rm);
+                    self.subToRegister(reg, reg_type, subtraction_data, is_wide_data);
+                    try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try self.printSetFlags(&writer);
+                    self.printString = writer.buffered();
+                },
+                .cmp_rtr => {
+                    const is_wide_reg = command.w.? == 1;
+                    const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
+                    const diff: u8 = if (is_wide_reg) 0 else 8;
+                    var reg_8: Registers_8bit = undefined;
+                    var rm_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    var rm: Registers = undefined;
+                    var reg_type: RegType = .full;
+                    if (diff > 0) {
+                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                        rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                        reg = reg_8.getRegister16bit();
+                        rm = reg_8.getRegister16bit();
+                        if (@intFromEnum(reg_8) < 4) {
+                            reg_type = .hi;
+                        } else reg_type = .lo;
+                    } else {
+                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                        rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                    }
+                    const subtraction_data = self.getRegisterVal(rm);
+                    self.cmp(reg, reg_type, subtraction_data, is_wide_data);
+                    try writer.print(" ", .{});
+                    try self.printSetFlags(&writer);
+                    self.printString = writer.buffered();
+                },
                 .arithmetic_itm => {
                     //const ItmOp = enum(u8) {
                     //add = 0b00000000,
@@ -299,25 +442,37 @@ pub const SimulatorRegisters = struct {
                     //sub = 0b00000101,
                     //cmp = 0b00000111,
                     //};
+                    const is_wide_reg = command.w.? == 1;
+                    const is_wide_data: RegType = if (is_wide_reg and command.s.? == 0) .full else .lo;
+                    const diff: u8 = if (is_wide_reg) 0 else 8;
+                    var reg_8: Registers_8bit = undefined;
+                    var reg: Registers = undefined;
+                    var reg_type: RegType = .full;
+                    if (diff > 0) {
+                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                        reg = reg_8.getRegister16bit();
+                        if (@intFromEnum(reg_8) < 4) {
+                            reg_type = .hi;
+                        } else reg_type = .lo;
+                    } else {
+                        reg = std.meta.stringToEnum(Registers, registers[command.reg.? + 8]).?;
+                    }
+                    const prev_data = self.getRegisterVal(reg);
                     switch (command.itm_op.?) {
                         .add => {
-                            const is_wide_reg = command.w.? == 1;
-                            const is_wide_data: RegType = if (is_wide_reg and command.s.? == 0) .full else .lo;
-                            const diff: u8 = if (is_wide_reg) 0 else 8;
-                            var reg_8: Registers_8bit = undefined;
-                            var reg: Registers = undefined;
-                            var reg_type: RegType = .full;
-                            if (diff > 0) {
-                                reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
-                                reg = reg_8.getRegister16bit();
-                                if (@intFromEnum(reg_8) < 4) {
-                                    reg_type = .hi;
-                                } else reg_type = .lo;
-                            } else {
-                                reg = std.meta.stringToEnum(Registers, registers[command.reg.? + 8]).?;
-                            }
-                            const prev_data = self.getRegisterVal(reg);
                             self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
+                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try self.printSetFlags(&writer);
+                            self.printString = writer.buffered();
+                        },
+                        .sub => {
+                            self.subToRegister(reg, reg_type, command.data.?, is_wide_data);
+                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try self.printSetFlags(&writer);
+                            self.printString = writer.buffered();
+                        },
+                        .cmp => {
+                            self.cmp(reg, reg_type, command.data.?, is_wide_data);
                             try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
                             self.printString = writer.buffered();
@@ -325,6 +480,7 @@ pub const SimulatorRegisters = struct {
                         else => unreachable,
                     }
                 },
+
                 else => return,
             }
         }
