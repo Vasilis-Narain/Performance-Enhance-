@@ -284,22 +284,13 @@ pub const SimulatorRegisters = struct {
         const ip_type: Registers = .ip;
         var writer = Io.Writer.fixed(&self.printBuf);
         if (command.jump_op) |jmp_op| {
-            const ip = self.registers[@intFromEnum(@as(Registers, .ip))];
-            const data: u16 = if (command.negative.?) 256 - command.data.? else command.data.?;
-            switch (jmp_op) {
-                .jnz => {
-                    if (!self.isSetFlag(.Z)) {
-                        if (command.negative.?) {
-                            if (data > ip) {
-                                self.registers[@intFromEnum(@as(Registers, .ip))] = 0;
-                            } else self.registers[@intFromEnum(@as(Registers, .ip))] -= data;
-                        } else {
-                            self.registers[@intFromEnum(@as(Registers, .ip))] += data;
-                        }
-                    }
-                },
-                else => {},
-            }
+            const ip_idx = @intFromEnum(@as(Registers, .ip));
+            const disp: i16 = @as(i8, @bitCast(@as(u8, @truncate(command.data.?))));
+            const taken = switch (jmp_op) {
+                .jnz => !self.isSetFlag(.Z),
+                else => unreachable,
+            };
+            if (taken) self.registers[ip_idx] +%= @bitCast(disp);
             return;
         }
         try writer.print("; ip: 0x{x:0>4}", .{self.registers[@intFromEnum(ip_type)]});
