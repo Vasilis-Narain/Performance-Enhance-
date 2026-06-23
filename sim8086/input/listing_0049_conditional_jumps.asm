@@ -1,4 +1,3 @@
-
 ; ========================================================================
 ;
 ; (C) Copyright 2023 by Molly Rocket, Inc., All Rights Reserved.
@@ -10,17 +9,14 @@
 ; Please see https://computerenhance.com for further information
 ;
 ; ========================================================================
-; LISTING 43
+; LISTING 49
 ; ========================================================================
 
 bits 16
 
-mov ax, 1
-mov bx, 2
 mov cx, 3
-mov dx, 4
-
-mov sp, 5
-mov bp, 6
-mov si, 7
-mov di, 8
+mov bx, 1000
+loop_start:
+add bx, 10
+sub cx, 1
+jnz loop_start

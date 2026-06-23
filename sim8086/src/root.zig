@@ -112,7 +112,7 @@ const JumpOp = enum(u8) {
 pub const SimulatorRegisters = struct {
     printBuf: [64]u8 = undefined,
     printString: []const u8 = &.{},
-    registers: [9]u16 = .{0} ** 9,
+    registers: [10]u16 = .{0} ** 10,
 
     pub const Registers = enum(u8) {
         ax,
@@ -123,6 +123,7 @@ pub const SimulatorRegisters = struct {
         bp,
         si,
         di,
+        ip,
         flags,
     };
     pub const Registers_8bit = enum(u8) {
@@ -165,8 +166,8 @@ pub const SimulatorRegisters = struct {
         self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~(@as(u16, 1) << flag_u)) | (@as(u16, @intFromBool(val)) << flag_u);
     }
 
-    pub fn isSetFlag(self: @This(), i: u4) bool {
-        return (self.getRegisterVal(.flags) >> i) & 1 == 1;
+    pub fn isSetFlag(self: @This(), flag: Flags) bool {
+        return (self.getRegisterVal(.flags) >> @intFromEnum(flag)) & 1 == 1;
     }
 
     pub fn printRegisters(self: @This(), writer: *Io.Writer) !void {
@@ -184,15 +185,15 @@ pub const SimulatorRegisters = struct {
                 },
             );
         }
-        const flags = self.getRegisterVal(.flags);
-        try writer.print("\nFlags: |{b:0>8}|{b:0>8}| (", .{ (flags & 0xFF00) >> 8, flags & 0xFF });
+        try writer.print("\n", .{});
         try self.printSetFlags(writer);
-        try writer.print(")\n", .{});
+        try writer.print("\n", .{});
     }
 
     pub fn printSetFlags(self: @This(), writer: *Io.Writer) !void {
+        try writer.print("flags: ", .{});
         inline for (@typeInfo(Flags).@"enum".fields) |flag| {
-            if (self.isSetFlag(flag.value)) try writer.print("{s}", .{flag.name});
+            if (self.isSetFlag(@enumFromInt(flag.value))) try writer.print("{s}", .{flag.name});
         }
     }
 
@@ -228,7 +229,7 @@ pub const SimulatorRegisters = struct {
                 sum = @as(u16, @intCast(sum_8bit)) << disp;
             },
         }
-        sum &= ~@intFromEnum(val_type);
+        sum &= ~@intFromEnum(reg_type);
         const parity = BitCountTable8bit[(sum & 0xFF)] % 2 == 0;
         self.setFlag(.S, sum_sflag);
         self.setFlag(.O, (lhs_sflag == rhs_sflag) and (lhs_sflag != sum_sflag));
@@ -262,7 +263,7 @@ pub const SimulatorRegisters = struct {
                 diff = @as(u16, @intCast(diff_8bit)) << disp;
             },
         }
-        diff &= ~@intFromEnum(val_type);
+        diff &= ~@intFromEnum(reg_type);
         const parity = BitCountTable8bit[(diff & 0xFF)] % 2 == 0;
         self.setFlag(.S, diff_sflag);
         self.setFlag(.O, (lhs_sflag != rhs_sflag) and (lhs_sflag != diff_sflag));
@@ -280,11 +281,28 @@ pub const SimulatorRegisters = struct {
     }
 
     pub fn execute(self: *@This(), command: *const Command) !void {
+        const ip_type: Registers = .ip;
         var writer = Io.Writer.fixed(&self.printBuf);
         if (command.jump_op) |jmp_op| {
-            _ = jmp_op;
+            const ip = self.registers[@intFromEnum(@as(Registers, .ip))];
+            const data: u16 = if (command.negative.?) 256 - command.data.? else command.data.?;
+            switch (jmp_op) {
+                .jnz => {
+                    if (!self.isSetFlag(.Z)) {
+                        if (command.negative.?) {
+                            if (data > ip) {
+                                self.registers[@intFromEnum(@as(Registers, .ip))] = 0;
+                            } else self.registers[@intFromEnum(@as(Registers, .ip))] -= data;
+                        } else {
+                            self.registers[@intFromEnum(@as(Registers, .ip))] += data;
+                        }
+                    }
+                },
+                else => {},
+            }
             return;
         }
+        try writer.print("; ip: 0x{x:0>4}", .{self.registers[@intFromEnum(ip_type)]});
         if (command.partial_opcode) |partial_opcode| {
             switch (partial_opcode) {
                 .mov_rtr => {
@@ -319,8 +337,7 @@ pub const SimulatorRegisters = struct {
                                 data >>= 8;
                             }
                             self.updateRegister(reg, data, reg_type);
-                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                            self.printString = writer.buffered();
+                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                         },
                         else => {},
                     }
@@ -345,8 +362,7 @@ pub const SimulatorRegisters = struct {
                         .itr => {
                             const prev_data = self.getRegisterVal(reg);
                             self.updateRegister(reg, command.data.?, reg_type);
-                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                            self.printString = writer.buffered();
+                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                         },
                         .atm => {},
                         .mta => {},
@@ -376,9 +392,8 @@ pub const SimulatorRegisters = struct {
                     const prev_data = self.getRegisterVal(reg);
                     const addition_data = self.getRegisterVal(rm);
                     self.addToRegister(reg, reg_type, addition_data, is_wide_data);
-                    try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                     try self.printSetFlags(&writer);
-                    self.printString = writer.buffered();
                 },
                 .sub_rtr => {
                     const is_wide_reg = command.w.? == 1;
@@ -404,9 +419,8 @@ pub const SimulatorRegisters = struct {
                     const prev_data = self.getRegisterVal(reg);
                     const subtraction_data = self.getRegisterVal(rm);
                     self.subToRegister(reg, reg_type, subtraction_data, is_wide_data);
-                    try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                     try self.printSetFlags(&writer);
-                    self.printString = writer.buffered();
                 },
                 .cmp_rtr => {
                     const is_wide_reg = command.w.? == 1;
@@ -433,7 +447,6 @@ pub const SimulatorRegisters = struct {
                     self.cmp(reg, reg_type, subtraction_data, is_wide_data);
                     try writer.print(" ", .{});
                     try self.printSetFlags(&writer);
-                    self.printString = writer.buffered();
                 },
                 .arithmetic_itm => {
                     //const ItmOp = enum(u8) {
@@ -461,21 +474,18 @@ pub const SimulatorRegisters = struct {
                     switch (command.itm_op.?) {
                         .add => {
                             self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
-                            self.printString = writer.buffered();
                         },
                         .sub => {
                             self.subToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
-                            self.printString = writer.buffered();
                         },
                         .cmp => {
                             self.cmp(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print("; {s}:0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
-                            self.printString = writer.buffered();
                         },
                         else => unreachable,
                     }
@@ -484,6 +494,7 @@ pub const SimulatorRegisters = struct {
                 else => return,
             }
         }
+        self.printString = writer.buffered();
     }
 
     pub fn resetBuffers(self: *@This()) void {
@@ -536,7 +547,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
             else => {
                 const jump_str = @tagName(jump);
                 const data: i8 = @bitCast(buf[buf_pos.* + 1]);
-                if (data < 0) command.negative = true;
+                command.negative = if (data < 0) true else false;
                 command.data = buf[buf_pos.* + 1];
                 command.jump_op = jump;
                 buf_pos.* += 2;

@@ -10,17 +10,13 @@
 ; Please see https://computerenhance.com for further information
 ;
 ; ========================================================================
-; LISTING 43
+; LISTING 48
 ; ========================================================================
 
 bits 16
 
-mov ax, 1
-mov bx, 2
-mov cx, 3
-mov dx, 4
-
-mov sp, 5
-mov bp, 6
-mov si, 7
-mov di, 8
+mov cx, 200
+mov bx, cx
+add cx, 1000
+mov bx, 2000
+sub cx, bx

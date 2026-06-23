@@ -42,32 +42,39 @@ pub fn main(init: std.process.Init) !void {
     })) |file| {
         defer file.close(io);
         var simRegisters: sim8086.SimulatorRegisters = .{};
-        var buf: [4096]u8 = undefined; // Grab a decent sized 'page' to reduce IO calls
-        var reader = file.reader(io, &buf); //zig magic... this thing has pointers internally to know when to grab a new page: Magic.
-        var instructions_read: u16 = 0;
+        const ip_reg: sim8086.SimulatorRegisters.Registers = .ip;
+        var memory: [1024 * 1024]u8 = undefined; // Maximum RAM for 8086 program
+        const bytes_read: u16 = blk: {
+            const size = (try file.stat(io)).size;
+            var reader = file.reader(io, &.{});
+            try reader.interface.readSliceAll(memory[0..@intCast(size)]);
+            break :blk @intCast(size);
+        };
+
         if (execute) {
             try stdout_writer.print("\n--- {s} execution ---\n", .{filepath});
         } else {
             try stdout_writer.print("\n; {s} disassembly:\n", .{filepath});
             try stdout_writer.print("bits 16\n\n", .{});
         }
-        while (true) : (instructions_read += 1) {
-            reader.interface.fill(6) catch |err| switch (err) {
-                error.EndOfStream => {},
-                error.ReadFailed => return reader.err.?,
-            };
 
-            const bytes = reader.interface.buffered();
-            if (bytes.len == 0) break;
+        var instructions_executed: u16 = 0;
+        simRegisters.registers[@intFromEnum(ip_reg)] = 0;
 
-            const window = bytes[0..@min(6, bytes.len)];
+        while (simRegisters.registers[@intFromEnum(ip_reg)] < bytes_read) : (instructions_executed += 1) {
+            const ip = simRegisters.registers[@intFromEnum(ip_reg)];
 
             // This is for edge case where peek return shorter array
             var bytes_to_check = [_]u8{0} ** 6;
-            @memcpy(bytes_to_check[0..window.len], window);
+            const end = @min(ip + 6, bytes_read);
+            @memcpy(bytes_to_check[0 .. end - ip], memory[ip..end]);
 
             var bytes_consumed: u8 = 0;
             const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);
+
+            // Advance IP before execution
+            simRegisters.registers[@intFromEnum(ip_reg)] += bytes_consumed;
+
             if (execute) {
                 try simRegisters.execute(&command.?);
                 try stdout_writer.print("{s} {s}\n", .{ command.?.command, simRegisters.printString });
@@ -75,9 +82,8 @@ pub fn main(init: std.process.Init) !void {
             } else {
                 try stdout_writer.print("{s}\n", .{command.?.command});
             }
-            reader.interface.toss(@min(bytes_consumed, window.len));
         }
-        if (!execute) try stdout_writer.print("\n; Instructions read: {d}\n", .{instructions_read});
+        if (!execute) try stdout_writer.print("\n; Instructions executed: {d}\n", .{instructions_executed});
         if (execute) try simRegisters.printRegisters(stdout_writer);
         try stdout_writer.print("\n", .{});
     } else |err| {
