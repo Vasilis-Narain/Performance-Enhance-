@@ -113,6 +113,7 @@ pub const SimulatorRegisters = struct {
     printBuf: [64]u8 = undefined,
     printString: []const u8 = &.{},
     registers: [10]u16 = .{0} ** 10,
+    memory: [1024 * 1024]u8 = .{0} ** (1024 * 1024), // Maximum RAM for 8086 program
 
     pub const Registers = enum(u8) {
         ax,
@@ -166,11 +167,11 @@ pub const SimulatorRegisters = struct {
         self.registers[self.registers.len - 1] = (self.registers[self.registers.len - 1] & ~(@as(u16, 1) << flag_u)) | (@as(u16, @intFromBool(val)) << flag_u);
     }
 
-    pub fn isSetFlag(self: @This(), flag: Flags) bool {
+    pub fn isSetFlag(self: *const @This(), flag: Flags) bool {
         return (self.getRegisterVal(.flags) >> @intFromEnum(flag)) & 1 == 1;
     }
 
-    pub fn printRegisters(self: @This(), writer: *Io.Writer) !void {
+    pub fn printRegisters(self: *const @This(), writer: *Io.Writer) !void {
         try writer.print("\nFinal registers:\n", .{});
         var i: u8 = 0;
         while (i < @typeInfo(Registers).@"enum".fields.len - 1) : (i += 1) {
@@ -190,14 +191,14 @@ pub const SimulatorRegisters = struct {
         try writer.print("\n", .{});
     }
 
-    pub fn printSetFlags(self: @This(), writer: *Io.Writer) !void {
+    pub fn printSetFlags(self: *const @This(), writer: *Io.Writer) !void {
         try writer.print("flags: ", .{});
         inline for (@typeInfo(Flags).@"enum".fields) |flag| {
             if (self.isSetFlag(@enumFromInt(flag.value))) try writer.print("{s}", .{flag.name});
         }
     }
 
-    pub fn getRegisterVal(self: @This(), register: Registers) u16 {
+    pub fn getRegisterVal(self: *const @This(), register: Registers) u16 {
         return self.registers[@intFromEnum(register)];
     }
 
@@ -330,7 +331,46 @@ pub const SimulatorRegisters = struct {
                             self.updateRegister(reg, data, reg_type);
                             try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                         },
+                        // no disp, byte disp, word disp
+                        // TODO: for listing 51 need to implement these
+                        0b00, 0b01, 0b10 => {},
                         else => {},
+                    }
+                },
+                .mov_itm => {
+                    const mod = command.mod.?;
+                    const rm = command.rm.?;
+                    const data = command.data.?;
+                    const w = command.w.?;
+                    const s = command.s.?;
+                    switch (mod) {
+
+                        // Memory Mode 00 no disp except R/M = 110
+                        0b00000000 => {
+                            const eff_addr = addresses[rm];
+                            _ = eff_addr;
+                            // Normal no disp
+                            if (rm != 0b00000110) {} else { // explicit address
+                                const expl_addr = command.expl_addr.?;
+                                if (s == 0 and w == 1) {
+                                    const data_hi: u8 = @truncate(data >> 8);
+                                    const data_lo: u8 = @truncate(data);
+                                    self.memory[expl_addr] = data_lo;
+                                    self.memory[expl_addr + 1] = data_hi;
+                                } else {
+                                    const data_u8: u8 = @truncate(data);
+                                    self.memory[expl_addr] = data_u8;
+                                }
+                            }
+                        },
+
+                        // Register Mode 11 no displacement
+                        0b00000011 => {},
+
+                        // Memory Mode 01, 8-bit displacement follows
+                        //  also Memory Mode 10, 16-bit displacement follows
+                        0b00000001, 0b00000010 => {},
+                        else => unreachable,
                     }
                 },
                 .mov_xtra => {
@@ -606,11 +646,12 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             buf_pos.* += 2;
                             return command;
                         } else {
+                            const word = if (w == 1) "word" else "byte";
                             const data_lo: u16 = @intCast(buf[buf_pos.* + 2]);
                             const data_hi: u16 = @intCast(buf[buf_pos.* + 3]);
                             const data: u16 = (data_hi << 8) | data_lo;
                             command.expl_addr = data;
-                            try writer.print("{s}, [{d}]", .{ reg_str, data });
+                            try writer.print("{s}, {s} [{d}]", .{ reg_str, word, data });
                             command.command = writer.buffered();
                             buf_pos.* += 4;
                             return command;

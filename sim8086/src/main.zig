@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const sim8086 = @import("sim8086");
+var simRegisters: sim8086.SimulatorRegisters = .{};
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -41,13 +42,11 @@ pub fn main(init: std.process.Init) !void {
         .lock = .exclusive,
     })) |file| {
         defer file.close(io);
-        var simRegisters: sim8086.SimulatorRegisters = .{};
         const ip_reg: sim8086.SimulatorRegisters.Registers = .ip;
-        var memory: [1024 * 1024]u8 = undefined; // Maximum RAM for 8086 program
         const bytes_read: u16 = blk: {
             const size = (try file.stat(io)).size;
             var reader = file.reader(io, &.{});
-            try reader.interface.readSliceAll(memory[0..@intCast(size)]);
+            try reader.interface.readSliceAll(simRegisters.memory[0..@intCast(size)]);
             break :blk @intCast(size);
         };
 
@@ -67,7 +66,7 @@ pub fn main(init: std.process.Init) !void {
             // This is for edge case where peek return shorter array
             var bytes_to_check = [_]u8{0} ** 6;
             const end = @min(ip + 6, bytes_read);
-            @memcpy(bytes_to_check[0 .. end - ip], memory[ip..end]);
+            @memcpy(bytes_to_check[0 .. end - ip], simRegisters.memory[ip..end]);
 
             var bytes_consumed: u8 = 0;
             const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);
@@ -83,7 +82,7 @@ pub fn main(init: std.process.Init) !void {
                 try stdout_writer.print("{s}\n", .{command.?.command});
             }
         }
-        if (!execute) try stdout_writer.print("\n; Instructions executed: {d}\n", .{instructions_executed});
+        if (execute) try stdout_writer.print("\n; Instructions executed: {d}\n", .{instructions_executed});
         if (execute) try simRegisters.printRegisters(stdout_writer);
         try stdout_writer.print("\n", .{});
     } else |err| {

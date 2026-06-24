@@ -9,19 +9,20 @@
 ; Please see https://computerenhance.com for further information
 ;
 ; ========================================================================
-; LISTING 38
+; LISTING 51
 ; ========================================================================
 
 bits 16
 
-mov cx, bx
-mov ch, ah
-mov dx, bx
-mov si, bx
-mov bx, di
-mov al, cl
-mov ch, ch
-mov bx, ax
-mov bx, si
-mov sp, di
-mov bp, ax
+mov word [1000], 1
+mov word [1002], 2
+mov word [1004], 3
+mov word [1006], 4
+
+mov bx, 1000
+;mov word [bx + 4], 10
+
+mov bx, word [1000]
+mov cx, word [1002]
+mov dx, word [1004]
+mov bp, word [1006]
