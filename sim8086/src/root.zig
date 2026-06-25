@@ -425,6 +425,7 @@ pub const SimulatorRegisters = struct {
                             }
                         },
                         // 8 bit disp
+                        // TODO: make sure this works in both directions (d, like above)
                         0b01 => {
                             var effective_addr = self.calculateEffectiveAddress(command.addr.?);
                             const disp = command.displacement_8.?;
