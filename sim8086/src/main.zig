@@ -69,17 +69,19 @@ pub fn main(init: std.process.Init) !void {
             @memcpy(bytes_to_check[0 .. end - ip], simRegisters.memory[ip..end]);
 
             var bytes_consumed: u8 = 0;
-            const command = try sim8086.disassemble(bytes_to_check, &bytes_consumed);
+            var command: sim8086.Command = .{};
+            const valid = try sim8086.disassemble(bytes_to_check, &bytes_consumed, &command);
+            if (!valid) break;
 
             // Advance IP before execution
             simRegisters.registers[@intFromEnum(ip_reg)] += bytes_consumed;
 
             if (execute) {
-                try simRegisters.execute(&command.?);
-                try stdout_writer.print("{s} {s}\n", .{ command.?.command, simRegisters.printString });
+                try simRegisters.execute(&command);
+                try stdout_writer.print("{s} {s}\n", .{ command.command, simRegisters.printString });
                 simRegisters.resetBuffers();
             } else {
-                try stdout_writer.print("{s}\n", .{command.?.command});
+                try stdout_writer.print("{s}\n", .{command.command});
             }
         }
         if (execute) try stdout_writer.print("\n; Instructions executed: {d}\n", .{instructions_executed});

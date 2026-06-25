@@ -33,6 +33,21 @@ const addresses: [8][]const u8 = [_][]const u8{
     "bx",
 };
 
+pub const effectiveAddress = enum(u8) {
+    bx_si,
+    bx_di,
+    bp_si,
+    bp_di,
+    si,
+    di,
+    bp,
+    bx,
+
+    pub fn getStr(self: @This()) []const u8 {
+        return addresses[@intFromEnum(self)];
+    }
+};
+
 const Op = enum(u8) {
     mov_xtra = 0b10000101, // sentinel for special cases
 
@@ -161,6 +176,19 @@ pub const SimulatorRegisters = struct {
         D = 10,
         O = 11,
     };
+
+    pub fn calculateEffectiveAddress(self: @This(), addr: effectiveAddress) u16 {
+        return switch (addr) {
+            .bx_si => self.registers[@intFromEnum(@as(Registers, .bx))] + self.registers[@intFromEnum(@as(Registers, .si))],
+            .bx_di => self.registers[@intFromEnum(@as(Registers, .bx))] + self.registers[@intFromEnum(@as(Registers, .di))],
+            .bp_si => self.registers[@intFromEnum(@as(Registers, .bp))] + self.registers[@intFromEnum(@as(Registers, .si))],
+            .bp_di => self.registers[@intFromEnum(@as(Registers, .bp))] + self.registers[@intFromEnum(@as(Registers, .di))],
+            .si => self.registers[@intFromEnum(@as(Registers, .si))],
+            .di => self.registers[@intFromEnum(@as(Registers, .di))],
+            .bp => self.registers[@intFromEnum(@as(Registers, .bp))],
+            .bx => self.registers[@intFromEnum(@as(Registers, .bx))],
+        };
+    }
 
     pub fn setFlag(self: *@This(), flag: Flags, val: bool) void {
         const flag_u: u4 = @intFromEnum(flag);
@@ -294,17 +322,18 @@ pub const SimulatorRegisters = struct {
             if (taken) self.registers[ip_idx] +%= @bitCast(disp);
             return;
         }
-        try writer.print("; ip: 0x{x:0>4}", .{self.registers[@intFromEnum(ip_type)]});
+        try writer.print("; ip: 0x{x}", .{self.registers[@intFromEnum(ip_type)]});
         if (command.partial_opcode) |partial_opcode| {
             switch (partial_opcode) {
                 .mov_rtr => {
                     const diff: u8 = if (command.w.? == 1) 0 else 8;
                     var reg_8: Registers_8bit = undefined;
                     var reg: Registers = undefined;
+                    var reg_type: RegType = .full;
                     const mod = command.mod.?;
                     switch (mod) {
+                        // Register mode
                         0b00000011 => {
-                            var reg_type: RegType = .full;
                             var rm_type: RegType = .full;
                             var rm_8: Registers_8bit = undefined;
                             var rm: Registers = undefined;
@@ -329,11 +358,97 @@ pub const SimulatorRegisters = struct {
                                 data >>= 8;
                             }
                             self.updateRegister(reg, data, reg_type);
-                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                         },
-                        // no disp, byte disp, word disp
-                        // TODO: for listing 51 need to implement these
-                        0b00, 0b01, 0b10 => {},
+                        // Memory Modes
+                        // no disp (or direct addr if rm = 110)
+                        0b00 => {
+                            if (command.rm.? == 0b110) {
+                                const expl_addr = command.expl_addr.?;
+                                var data: u16 = undefined;
+                                if (diff == 0) {
+                                    reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                                    const data_lo = self.memory[expl_addr];
+                                    const data_hi = self.memory[expl_addr + 1];
+                                    data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                } else {
+                                    reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                    reg = reg_8.getRegister16bit();
+                                    if (@intFromEnum(reg_8) < 4) {
+                                        reg_type = .hi;
+                                    } else reg_type = .lo;
+                                    data = @intCast(self.memory[expl_addr]);
+                                }
+                                const prev_data = self.getRegisterVal(reg);
+                                self.updateRegister(reg, data, reg_type);
+                                try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            } else {
+                                const d = command.d.?;
+                                const effective_addr = self.calculateEffectiveAddress(command.addr.?);
+                                var data: u16 = undefined;
+                                if (d == 1) {
+                                    if (diff == 0) {
+                                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                                        const data_lo = self.memory[effective_addr];
+                                        const data_hi = self.memory[effective_addr + 1];
+                                        data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                    } else {
+                                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                        reg = reg_8.getRegister16bit();
+                                        if (@intFromEnum(reg_8) < 4) {
+                                            reg_type = .hi;
+                                        } else reg_type = .lo;
+                                        data = @intCast(self.memory[effective_addr]);
+                                    }
+                                    const prev_data = self.getRegisterVal(reg);
+                                    self.updateRegister(reg, data, reg_type);
+                                    try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                } else {
+                                    if (diff == 0) {
+                                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                                        data = self.getRegisterVal(reg);
+                                        const data_lo: u8 = @truncate(data & 0xFF);
+                                        const data_hi: u8 = @truncate((data & 0xFF00) >> 8);
+                                        self.memory[effective_addr] = data_lo;
+                                        self.memory[effective_addr + 1] = data_hi;
+                                    } else {
+                                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                        reg = reg_8.getRegister16bit();
+                                        data = self.getRegisterVal(reg);
+                                        var data_u8: u8 = undefined;
+                                        if (@intFromEnum(reg_8) < 4) {
+                                            data_u8 = @truncate((data & 0xFF00) >> 8);
+                                        } else data_u8 = @truncate(data & 0xFF);
+                                        self.memory[effective_addr] = data_u8;
+                                    }
+                                }
+                            }
+                        },
+                        // 8 bit disp
+                        0b01 => {
+                            var effective_addr = self.calculateEffectiveAddress(command.addr.?);
+                            const disp = command.displacement_8.?;
+                            var data: u16 = undefined;
+                            effective_addr = if (disp < 0) effective_addr -% @as(u16, (@abs(disp))) else effective_addr +% @as(u16, (@abs(disp)));
+                            if (diff == 0) {
+                                reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                                const data_lo = self.memory[effective_addr];
+                                const data_hi = self.memory[effective_addr + 1];
+                                data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                            } else {
+                                reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                reg = reg_8.getRegister16bit();
+                                if (@intFromEnum(reg_8) < 4) {
+                                    reg_type = .hi;
+                                } else reg_type = .lo;
+                                data = @intCast(self.memory[effective_addr]);
+                            }
+                            const prev_data = self.getRegisterVal(reg);
+                            self.updateRegister(reg, data, reg_type);
+                            try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                        },
+                        // 16 bit disp
+                        0b10 => {},
                         else => {},
                     }
                 },
@@ -346,9 +461,7 @@ pub const SimulatorRegisters = struct {
                     switch (mod) {
 
                         // Memory Mode 00 no disp except R/M = 110
-                        0b00000000 => {
-                            const eff_addr = addresses[rm];
-                            _ = eff_addr;
+                        0b00 => {
                             // Normal no disp
                             if (rm != 0b00000110) {} else { // explicit address
                                 const expl_addr = command.expl_addr.?;
@@ -364,12 +477,24 @@ pub const SimulatorRegisters = struct {
                             }
                         },
 
-                        // Register Mode 11 no displacement
-                        0b00000011 => {},
-
+                        // 8bit disp
+                        0b01 => {
+                            var effective_addr = self.calculateEffectiveAddress(command.addr.?);
+                            const disp = command.displacement_8.?;
+                            effective_addr = if (disp < 0) effective_addr -% @as(u16, (@abs(disp))) else effective_addr +% @as(u16, (@abs(disp)));
+                            if (w == 1) {
+                                const data_hi: u8 = @truncate(data >> 8);
+                                const data_lo: u8 = @truncate(data);
+                                self.memory[effective_addr] = data_lo;
+                                self.memory[effective_addr + 1] = data_hi;
+                            } else {
+                                const data_u8: u8 = @truncate(data);
+                                self.memory[effective_addr] = data_u8;
+                            }
+                        },
                         // Memory Mode 01, 8-bit displacement follows
                         //  also Memory Mode 10, 16-bit displacement follows
-                        0b00000001, 0b00000010 => {},
+                        0b10 => {},
                         else => unreachable,
                     }
                 },
@@ -393,7 +518,7 @@ pub const SimulatorRegisters = struct {
                         .itr => {
                             const prev_data = self.getRegisterVal(reg);
                             self.updateRegister(reg, command.data.?, reg_type);
-                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                         },
                         .atm => {},
                         .mta => {},
@@ -423,7 +548,7 @@ pub const SimulatorRegisters = struct {
                     const prev_data = self.getRegisterVal(reg);
                     const addition_data = self.getRegisterVal(rm);
                     self.addToRegister(reg, reg_type, addition_data, is_wide_data);
-                    try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                     try self.printSetFlags(&writer);
                 },
                 .sub_rtr => {
@@ -450,7 +575,7 @@ pub const SimulatorRegisters = struct {
                     const prev_data = self.getRegisterVal(reg);
                     const subtraction_data = self.getRegisterVal(rm);
                     self.subToRegister(reg, reg_type, subtraction_data, is_wide_data);
-                    try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                     try self.printSetFlags(&writer);
                 },
                 .cmp_rtr => {
@@ -505,17 +630,17 @@ pub const SimulatorRegisters = struct {
                     switch (command.itm_op.?) {
                         .add => {
                             self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
                         },
                         .sub => {
                             self.subToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
                         },
                         .cmp => {
                             self.cmp(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x:0>4}->0x{x:0>4} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
                             try self.printSetFlags(&writer);
                         },
                         else => unreachable,
@@ -534,17 +659,18 @@ pub const SimulatorRegisters = struct {
     }
 };
 
-const Command = struct {
+pub const Command = struct {
     partial_opcode: ?Op = null,
     itm_op: ?ItmOp = null,
     jump_op: ?JumpOp = null,
-    addr: ?[]const u8 = null,
+    addr: ?effectiveAddress = null,
     expl_addr: ?u16 = null,
     reg: ?u8 = null,
     rm: ?u8 = null,
     data: ?u16 = null,
     mod: ?u8 = null,
-    displacement: ?u16 = null,
+    displacement_8: ?i8 = null,
+    displacement_16: ?i16 = null,
     neg_displ: ?bool = null,
     mov_xtra_type: ?movXtraType = null,
     d: ?u8 = null,
@@ -565,13 +691,12 @@ const Command = struct {
 ///     ;Register-to-register:
 ///     10001001 11011001 -> mov cx, bx
 ///
-pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
+pub fn disassemble(buf: [6]u8, buf_pos: *u8, command: *Command) Io.Writer.Error!bool {
     assert(buf_pos.* == 0);
     while (buf_pos.* + 1 < buf.len) {
         const buf_i = buf[buf_pos.*];
         // Check for jumps
         const jump: JumpOp = @enumFromInt(buf_i);
-        var command: Command = .{}; // return value
         var writer: std.Io.Writer = .fixed(&command.commandBuf);
         switch (jump) {
             _ => {},
@@ -584,7 +709,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                 buf_pos.* += 2;
                 try writer.print("{s} ($+2)+{d}", .{ jump_str, data });
                 command.command = writer.buffered();
-                return command;
+                return true;
             },
         }
         const partial_opcode = if (buf_i >> 5 == 0b00000101) (buf_i >> 5) | 0b10000000 else buf_i >> 2;
@@ -627,24 +752,24 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         }
                         command.command = writer.buffered();
                         buf_pos.* += 2;
-                        return command;
+                        return true;
                     },
 
                     // Memory Mode 00 no displacement (except for rm 110 dir addr)
                     0b00000000 => {
+                        command.rm = rm;
+                        command.reg = reg + w * 8;
                         if (rm != 0b00000110) {
                             const eff_addr = addresses[rm];
-                            //TODO:
                             if (d == 1) {
                                 try writer.print("{s}, [{s}]", .{ reg_str, eff_addr });
                             } else {
                                 try writer.print("[{s}], {s}", .{ eff_addr, reg_str });
                             }
-                            command.addr = eff_addr;
-                            command.reg = reg;
+                            command.addr = @as(effectiveAddress, @enumFromInt(rm));
                             command.command = writer.buffered();
                             buf_pos.* += 2;
-                            return command;
+                            return true;
                         } else {
                             const word = if (w == 1) "word" else "byte";
                             const data_lo: u16 = @intCast(buf[buf_pos.* + 2]);
@@ -654,7 +779,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             try writer.print("{s}, {s} [{d}]", .{ reg_str, word, data });
                             command.command = writer.buffered();
                             buf_pos.* += 4;
-                            return command;
+                            return true;
                         }
                     },
 
@@ -669,8 +794,8 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             neg = true;
                         }
 
-                        command.reg = reg;
-                        command.addr = eff_addr;
+                        command.reg = reg + w * 8;
+                        command.addr = @as(effectiveAddress, @enumFromInt(rm));
 
                         if (data == 0) {
                             if (d == 1) {
@@ -684,12 +809,11 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             } else {
                                 try writer.print("[{s} {s} {d}], {s}", .{ eff_addr, sign, data, reg_str });
                             }
-                            command.neg_displ = neg;
-                            command.displacement = @intCast(buf[buf_pos.* + 2]);
                         }
+                        command.displacement_8 = data;
                         command.command = writer.buffered();
                         buf_pos.* += 3;
-                        return command;
+                        return true;
                     },
 
                     // Memory Mode 10, 16-bit displacement follows
@@ -700,6 +824,8 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         var data: i16 = @bitCast((data_hi << 8) | data_lo);
                         const neg = if (data >= 0) false else true;
                         const sign = if (!neg) "+" else "-";
+                        command.reg = reg + w * 8;
+                        command.addr = @as(effectiveAddress, @enumFromInt(rm));
                         if (data < 0) data *= -1;
                         if (data == 0) {
                             if (d == 1) {
@@ -707,20 +833,17 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             } else {
                                 try writer.print("[{s}], {s}", .{ eff_addr, reg_str });
                             }
-                            command.reg = reg;
-                            command.addr = eff_addr;
                         } else {
                             if (d == 1) {
                                 try writer.print("{s}, [{s} {s} {d}]", .{ reg_str, eff_addr, sign, data });
                             } else {
                                 try writer.print("[{s} {s} {d}], {s}", .{ eff_addr, sign, data, reg_str });
                             }
-                            command.neg_displ = neg;
-                            command.displacement = (data_hi << 8) | data_lo;
                         }
+                        command.displacement_16 = data;
                         command.command = writer.buffered();
                         buf_pos.* += 4;
-                        return command;
+                        return true;
                     },
 
                     else => unreachable,
@@ -759,9 +882,9 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             }
                             try writer.print("{s} [{s}], {d}", .{ w_keyword, eff_addr, data });
                             command.data = data;
-                            command.addr = eff_addr;
+                            command.addr = @as(effectiveAddress, @enumFromInt(rm));
                             command.command = writer.buffered();
-                            return command;
+                            return true;
                         } else {
                             const addr_lo: u16 = @intCast(buf[buf_pos.* + 2]);
                             const addr_hi: u16 = @intCast(buf[buf_pos.* + 3]);
@@ -778,7 +901,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             command.data = data;
                             command.expl_addr = addr;
                             command.command = writer.buffered();
-                            return command;
+                            return true;
                         }
                     },
 
@@ -797,26 +920,36 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         command.reg = rm;
                         command.data = data;
                         command.command = writer.buffered();
-                        return command;
+                        return true;
                     },
 
                     // Memory Mode 01, 8-bit displacement follows
                     //  also Memory Mode 10, 16-bit displacement follows
                     0b00000001, 0b00000010 => {
                         const eff_addr = addresses[rm];
-                        var disp: i16 = undefined;
+                        var disp_16: i16 = undefined;
+                        var disp_8: i8 = undefined;
                         var disp_u16: u16 = @intCast(buf[buf_pos.* + 2]);
+                        var disp_neg: bool = false;
+                        var disp_0: bool = false;
 
                         if (mod == 0b00000010) {
                             const disp_hi: u16 = @intCast(buf[buf_pos.* + 3]);
                             disp_u16 |= disp_hi << 8;
-                            disp = @bitCast((disp_hi << 8) | disp_u16);
+                            disp_16 = @bitCast((disp_hi << 8) | disp_u16);
+                            if (disp_16 < 0) disp_neg = true;
+                            if (disp_16 == 0) disp_0 = true;
+                            command.displacement_16 = disp_16;
                             buf_pos.* += 1;
-                        } else disp = @bitCast(disp_u16);
+                        } else {
+                            disp_8 = @bitCast(@as(u8, @truncate(disp_u16)));
+                            command.displacement_8 = disp_8;
+                            disp_16 = @intCast(disp_8);
+                            if (disp_8 < 0) disp_neg = true;
+                            if (disp_8 == 0) disp_0 = true;
+                        }
 
-                        const disp_neg = if (disp >= 0) false else true;
                         const sign = if (!disp_neg) "+" else "-";
-                        if (disp < 0) disp *= -1;
 
                         var data: u16 = @intCast(buf[buf_pos.* + 3]);
                         if (s == 0 and w == 1) {
@@ -827,19 +960,18 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                             buf_pos.* += 4;
                         }
                         try writer.print("{s} ", .{w_keyword});
-                        if (disp == 0) {
+                        if (disp_0) {
                             try writer.print("[{s}], ", .{eff_addr});
                         } else {
-                            try writer.print("[{s} {s} {d}], ", .{ eff_addr, sign, disp });
+                            try writer.print("[{s} {s} {d}], ", .{ eff_addr, sign, @abs(disp_16) });
                         }
                         try writer.print("{d}", .{data});
 
-                        command.addr = eff_addr;
+                        command.addr = @as(effectiveAddress, @enumFromInt(rm));
                         command.neg_displ = disp_neg;
-                        command.displacement = disp_u16;
                         command.data = data;
                         command.command = writer.buffered();
-                        return command;
+                        return true;
                     },
                     else => unreachable,
                 }
@@ -862,7 +994,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                 command.data = data;
                 command.command = writer.buffered();
                 buf_pos.* += 2;
-                return command;
+                return true;
             },
             .mov_xtra => {
                 // Immediate-to-register OR Memory to accumulator OR Accumulator to memory
@@ -893,7 +1025,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         }
                         command.data = data;
                         command.command = writer.buffered();
-                        return command;
+                        return true;
                     }, //else { //Accumulator-to-memory or Memory-to-accumulator
 
                     .atm => {
@@ -910,7 +1042,7 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         try writer.print("[{d}], {s}", .{ addr, reg });
                         command.command = writer.buffered();
                         buf_pos.* += 3;
-                        return command;
+                        return true;
                     }, //else { //Memory-to-accumulator
                     .mta => {
                         const w = buf_i & 0b00000001;
@@ -925,12 +1057,12 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8) Io.Writer.Error!?Command {
                         try writer.print("{s}, [{d}]", .{ reg, addr });
                         command.command = writer.buffered();
                         buf_pos.* += 3;
-                        return command;
+                        return true;
                     },
                 }
             },
         }
     }
 
-    return null;
+    return false;
 }
