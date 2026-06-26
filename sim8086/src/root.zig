@@ -235,6 +235,90 @@ pub const SimulatorRegisters = struct {
         const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3; // NOTE: this shit = 8 bruh (or 0)
         self.registers[@intFromEnum(register)] = (self.registers[@intFromEnum(register)] & @intFromEnum(reg_type)) | (new_val << disp);
     }
+    pub fn addToMemory(self: *@This(), address: u16, word: bool, new_val: u16, val_type: RegType) void {
+        var lhs: u16 = undefined;
+        if (!word) {
+            lhs = @intCast(self.memory[address]);
+        } else {
+            const lhs_lo = self.memory[address];
+            const lhs_hi = self.memory[address + 1];
+            lhs = (@as(u16, @intCast(lhs_hi)) << 8) | @as(u16, @intCast(lhs_lo));
+        }
+        const rhs_sflag = switch (val_type) {
+            .hi, .full => (new_val & 0x8000) == 0x8000,
+            .lo => (new_val & 0x80) == 0x80,
+        };
+        var lhs_sflag: bool = undefined;
+        var sum: u16 = undefined;
+        var sum_sflag: bool = undefined;
+        var aux_flag: bool = undefined;
+        if (word) {
+            lhs_sflag = (lhs & 0x8000) == 0x8000;
+            sum = lhs +% new_val;
+            sum_sflag = (sum & 0x8000) == 0x8000;
+            aux_flag = ((lhs ^ new_val ^ sum) & 0x10) != 0;
+            self.memory[address] = @truncate(sum & 0xFF);
+            self.memory[address + 1] = @truncate((sum & 0xFF00) >> 8);
+        } else {
+            lhs_sflag = lhs & (@as(u16, @intCast(0x80))) == @as(u16, @intCast(0x80));
+            const sum_8bit: u8 = @as(u8, @truncate(lhs)) +% @as(u8, @truncate(new_val));
+            self.memory[address] = sum_8bit;
+            aux_flag = ((@as(u8, @truncate(lhs)) ^ @as(u8, @truncate(new_val)) ^ sum_8bit) & 0x10) != 0;
+            sum_sflag = (sum_8bit & 0x80) == 0x80;
+            sum = @as(u16, @intCast(sum_8bit));
+        }
+        const parity = BitCountTable8bit[(sum & 0xFF)] % 2 == 0;
+        self.setFlag(.S, sum_sflag);
+        self.setFlag(.A, aux_flag);
+        self.setFlag(.O, (lhs_sflag == rhs_sflag) and (lhs_sflag != sum_sflag));
+        self.setFlag(.C, sum < new_val);
+        self.setFlag(.Z, sum == 0);
+        self.setFlag(.P, parity);
+    }
+    pub fn subToMemory(self: *@This(), address: u16, word: bool, new_val: u16, val_type: RegType, cmp_flag: bool) void {
+        var lhs: u16 = undefined;
+        if (!word) {
+            lhs = @intCast(self.memory[address]);
+        } else {
+            const lhs_lo = self.memory[address];
+            const lhs_hi = self.memory[address + 1];
+            lhs = (@as(u16, @intCast(lhs_hi)) << 8) | @as(u16, @intCast(lhs_lo));
+        }
+        const rhs_sflag = switch (val_type) {
+            .hi, .full => (new_val & 0x8000) == 0x8000,
+            .lo => (new_val & 0x80) == 0x80,
+        };
+        var lhs_sflag: bool = undefined;
+        var sum: u16 = undefined;
+        var sum_sflag: bool = undefined;
+        var aux_flag: bool = undefined;
+        if (word) {
+            lhs_sflag = (lhs & 0x8000) == 0x8000;
+            sum = lhs -% new_val;
+            sum_sflag = (sum & 0x8000) == 0x8000;
+            aux_flag = ((lhs ^ new_val ^ sum) & 0x10) != 0;
+            if (!cmp_flag) {
+                self.memory[address] = @truncate(sum & 0xFF);
+                self.memory[address + 1] = @truncate((sum & 0xFF00) >> 8);
+            }
+        } else {
+            lhs_sflag = lhs & (@as(u16, @intCast(0x80))) == @as(u16, @intCast(0x80));
+            const sum_8bit: u8 = @as(u8, @truncate(lhs)) -% @as(u8, @truncate(new_val));
+            if (!cmp_flag) {
+                self.memory[address] = sum_8bit;
+            }
+            aux_flag = ((@as(u8, @truncate(lhs)) ^ @as(u8, @truncate(new_val)) ^ sum_8bit) & 0x10) != 0;
+            sum_sflag = (sum_8bit & 0x80) == 0x80;
+            sum = @as(u16, @intCast(sum_8bit));
+        }
+        const parity = BitCountTable8bit[(sum & 0xFF)] % 2 == 0;
+        self.setFlag(.S, sum_sflag);
+        self.setFlag(.A, aux_flag);
+        self.setFlag(.O, (lhs_sflag != rhs_sflag) and (lhs_sflag != sum_sflag));
+        self.setFlag(.C, lhs < new_val);
+        self.setFlag(.Z, sum == 0);
+        self.setFlag(.P, parity);
+    }
     pub fn addToRegister(self: *@This(), register: Registers, reg_type: RegType, new_val: u16, val_type: RegType) void {
         const disp: u4 = @as(u4, @intCast(@intFromEnum(reg_type) & 1)) << 3; // NOTE: yep, still 8 (or 0)
         const reg_val = self.registers[@intFromEnum(register)];
@@ -372,27 +456,44 @@ pub const SimulatorRegisters = struct {
                         // Memory Modes
                         // no disp (or direct addr if rm = 110)
                         0b00 => {
+                            const d = command.d.?;
                             if (command.rm.? == 0b110) {
                                 const expl_addr = command.expl_addr.?;
                                 var data: u16 = undefined;
                                 if (diff == 0) {
                                     reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
-                                    const data_lo = self.memory[expl_addr];
-                                    const data_hi = self.memory[expl_addr + 1];
-                                    data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                    data = self.getRegisterVal(reg);
+                                    const data_lo = if (d == 1) self.memory[expl_addr] else @as(u8, @truncate(data & 0xFF));
+                                    const data_hi = if (d == 1) self.memory[expl_addr + 1] else @as(u8, @truncate((data & 0xFF00) >> 8));
+                                    if (d == 1) {
+                                        data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                    } else {
+                                        self.memory[expl_addr] = data_lo;
+                                        self.memory[expl_addr + 1] = data_hi;
+                                    }
                                 } else {
                                     reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
                                     reg = reg_8.getRegister16bit();
                                     if (@intFromEnum(reg_8) < 4) {
                                         reg_type = .hi;
                                     } else reg_type = .lo;
-                                    data = @intCast(self.memory[expl_addr]);
+                                    if (d == 1) {
+                                        data = @intCast(self.memory[expl_addr]);
+                                    } else {
+                                        var data_u8: u8 = undefined;
+                                        data = self.getRegisterVal(reg);
+                                        if (@intFromEnum(reg_8) < 4) {
+                                            data_u8 = @truncate((data & 0xFF00) >> 8);
+                                        } else data_u8 = @truncate(data & 0xFF);
+                                        self.memory[expl_addr] = data_u8;
+                                    }
                                 }
-                                const prev_data = self.getRegisterVal(reg);
-                                self.updateRegister(reg, data, reg_type);
-                                try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                if (d == 1) {
+                                    const prev_data = self.getRegisterVal(reg);
+                                    self.updateRegister(reg, data, reg_type);
+                                    try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                }
                             } else {
-                                const d = command.d.?;
                                 const effective_addr = self.calculateEffectiveAddress(command.addr.?);
                                 var data: u16 = undefined;
                                 if (d == 1) {
@@ -434,28 +535,45 @@ pub const SimulatorRegisters = struct {
                             }
                         },
                         // 8 bit disp
-                        // TODO: make sure this works in both directions (d, like above)
                         0b01 => {
+                            const d = command.d.?;
                             var effective_addr = self.calculateEffectiveAddress(command.addr.?);
                             const disp = command.displacement_8.?;
                             var data: u16 = undefined;
                             effective_addr = if (disp < 0) effective_addr -% @as(u16, (@abs(disp))) else effective_addr +% @as(u16, (@abs(disp)));
                             if (diff == 0) {
                                 reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
-                                const data_lo = self.memory[effective_addr];
-                                const data_hi = self.memory[effective_addr + 1];
-                                data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                data = self.getRegisterVal(reg);
+                                const data_lo = if (d == 1) self.memory[effective_addr] else @as(u8, @truncate(data & 0xFF));
+                                const data_hi = if (d == 1) self.memory[effective_addr + 1] else @as(u8, @truncate((data & 0xFF00) >> 8));
+                                if (d == 1) {
+                                    data = (@as(u16, @intCast(data_hi)) << 8) | data_lo;
+                                } else {
+                                    self.memory[effective_addr] = data_lo;
+                                    self.memory[effective_addr + 1] = data_hi;
+                                }
                             } else {
                                 reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
                                 reg = reg_8.getRegister16bit();
                                 if (@intFromEnum(reg_8) < 4) {
                                     reg_type = .hi;
                                 } else reg_type = .lo;
-                                data = @intCast(self.memory[effective_addr]);
+                                if (d == 1) {
+                                    data = @intCast(self.memory[effective_addr]);
+                                } else {
+                                    var data_u8: u8 = undefined;
+                                    data = self.getRegisterVal(reg);
+                                    if (@intFromEnum(reg_8) < 4) {
+                                        data_u8 = @truncate((data & 0xFF00) >> 8);
+                                    } else data_u8 = @truncate(data & 0xFF);
+                                    self.memory[effective_addr] = data_u8;
+                                }
                             }
-                            const prev_data = self.getRegisterVal(reg);
-                            self.updateRegister(reg, data, reg_type);
-                            try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            if (d == 1) {
+                                const prev_data = self.getRegisterVal(reg);
+                                self.updateRegister(reg, data, reg_type);
+                                try writer.print(" {s}: 0x{x}->0x{x}", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            }
                         },
                         // 16 bit disp
                         0b10 => {},
@@ -534,7 +652,8 @@ pub const SimulatorRegisters = struct {
                         .mta => {},
                     }
                 },
-                .add_rtr => {
+                .add_rtr, .sub_rtr, .cmp_rtr => {
+                    const op_type = command.itm_op.?;
                     const is_wide_reg = command.w.? == 1;
                     const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
                     const diff: u8 = if (is_wide_reg) 0 else 8;
@@ -558,9 +677,21 @@ pub const SimulatorRegisters = struct {
                                 rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
                             }
                             const prev_data = self.getRegisterVal(reg);
-                            const addition_data = self.getRegisterVal(rm);
-                            self.addToRegister(reg, reg_type, addition_data, is_wide_data);
-                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                            const new_data = self.getRegisterVal(rm);
+                            switch (op_type) {
+                                .add => {
+                                    self.addToRegister(reg, reg_type, new_data, is_wide_data);
+                                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                },
+                                .sub => {
+                                    self.subToRegister(reg, reg_type, new_data, is_wide_data);
+                                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                },
+                                .cmp => {
+                                    self.cmp(reg, reg_type, new_data, is_wide_data);
+                                },
+                                else => unreachable,
+                            }
                             try self.printSetFlags(&writer);
                         },
                         // Memory Modes
@@ -583,8 +714,20 @@ pub const SimulatorRegisters = struct {
                                     data = @intCast(self.memory[expl_addr]);
                                 }
                                 const prev_data = self.getRegisterVal(reg);
-                                self.addToRegister(reg, reg_type, data, reg_type);
-                                try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                switch (op_type) {
+                                    .add => {
+                                        self.addToRegister(reg, reg_type, data, is_wide_data);
+                                        try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                    },
+                                    .sub => {
+                                        self.subToRegister(reg, reg_type, data, is_wide_data);
+                                        try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                    },
+                                    .cmp => {
+                                        self.cmp(reg, reg_type, data, is_wide_data);
+                                    },
+                                    else => unreachable,
+                                }
                                 try self.printSetFlags(&writer);
                             } else {
                                 const d = command.d.?;
@@ -605,17 +748,39 @@ pub const SimulatorRegisters = struct {
                                         data = @intCast(self.memory[effective_addr]);
                                     }
                                     const prev_data = self.getRegisterVal(reg);
-                                    self.addToRegister(reg, reg_type, data, reg_type);
-                                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                    switch (op_type) {
+                                        .add => {
+                                            self.addToRegister(reg, reg_type, data, is_wide_data);
+                                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                        },
+                                        .sub => {
+                                            self.subToRegister(reg, reg_type, data, is_wide_data);
+                                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                        },
+                                        .cmp => {
+                                            self.cmp(reg, reg_type, data, is_wide_data);
+                                        },
+                                        else => unreachable,
+                                    }
                                     try self.printSetFlags(&writer);
                                 } else {
                                     if (diff == 0) {
                                         reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
                                         data = self.getRegisterVal(reg);
-                                        const data_lo: u8 = @truncate(data & 0xFF);
-                                        const data_hi: u8 = @truncate((data & 0xFF00) >> 8);
-                                        self.memory[effective_addr] = data_lo;
-                                        self.memory[effective_addr + 1] = data_hi;
+                                        try self.printSetFlags(&writer);
+
+                                        switch (op_type) {
+                                            .add => {
+                                                self.addToMemory(effective_addr, true, data, is_wide_data);
+                                            },
+                                            .sub => {
+                                                self.subToMemory(effective_addr, true, data, is_wide_data, false);
+                                            },
+                                            .cmp => {
+                                                self.subToMemory(effective_addr, true, data, is_wide_data, true);
+                                            },
+                                            else => unreachable,
+                                        }
                                     } else {
                                         reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
                                         reg = reg_8.getRegister16bit();
@@ -624,7 +789,18 @@ pub const SimulatorRegisters = struct {
                                         if (@intFromEnum(reg_8) < 4) {
                                             data_u8 = @truncate((data & 0xFF00) >> 8);
                                         } else data_u8 = @truncate(data & 0xFF);
-                                        self.memory[effective_addr] = data_u8;
+                                        switch (op_type) {
+                                            .add => {
+                                                self.addToMemory(effective_addr, false, data, is_wide_data);
+                                            },
+                                            .sub => {
+                                                self.subToMemory(effective_addr, false, data, is_wide_data, false);
+                                            },
+                                            .cmp => {
+                                                self.subToMemory(effective_addr, false, data, is_wide_data, true);
+                                            },
+                                            else => unreachable,
+                                        }
                                     }
                                 }
                             }
@@ -659,59 +835,59 @@ pub const SimulatorRegisters = struct {
                         else => unreachable,
                     }
                 },
-                .sub_rtr => {
-                    const is_wide_reg = command.w.? == 1;
-                    const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
-                    const diff: u8 = if (is_wide_reg) 0 else 8;
-                    var reg_8: Registers_8bit = undefined;
-                    var rm_8: Registers_8bit = undefined;
-                    var reg: Registers = undefined;
-                    var rm: Registers = undefined;
-                    var reg_type: RegType = .full;
-                    if (diff > 0) {
-                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
-                        rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
-                        reg = reg_8.getRegister16bit();
-                        rm = reg_8.getRegister16bit();
-                        if (@intFromEnum(reg_8) < 4) {
-                            reg_type = .hi;
-                        } else reg_type = .lo;
-                    } else {
-                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
-                        rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
-                    }
-                    const prev_data = self.getRegisterVal(reg);
-                    const subtraction_data = self.getRegisterVal(rm);
-                    self.subToRegister(reg, reg_type, subtraction_data, is_wide_data);
-                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                    try self.printSetFlags(&writer);
-                },
-                .cmp_rtr => {
-                    const is_wide_reg = command.w.? == 1;
-                    const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
-                    const diff: u8 = if (is_wide_reg) 0 else 8;
-                    var reg_8: Registers_8bit = undefined;
-                    var rm_8: Registers_8bit = undefined;
-                    var reg: Registers = undefined;
-                    var rm: Registers = undefined;
-                    var reg_type: RegType = .full;
-                    if (diff > 0) {
-                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
-                        rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
-                        reg = reg_8.getRegister16bit();
-                        rm = reg_8.getRegister16bit();
-                        if (@intFromEnum(reg_8) < 4) {
-                            reg_type = .hi;
-                        } else reg_type = .lo;
-                    } else {
-                        reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
-                        rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
-                    }
-                    const subtraction_data = self.getRegisterVal(rm);
-                    self.cmp(reg, reg_type, subtraction_data, is_wide_data);
-                    try writer.print(" ", .{});
-                    try self.printSetFlags(&writer);
-                },
+                //.sub_rtr => {
+                //const is_wide_reg = command.w.? == 1;
+                //const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
+                //const diff: u8 = if (is_wide_reg) 0 else 8;
+                //var reg_8: Registers_8bit = undefined;
+                //var rm_8: Registers_8bit = undefined;
+                //var reg: Registers = undefined;
+                //var rm: Registers = undefined;
+                //var reg_type: RegType = .full;
+                //if (diff > 0) {
+                //reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                //rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                //reg = reg_8.getRegister16bit();
+                //rm = reg_8.getRegister16bit();
+                //if (@intFromEnum(reg_8) < 4) {
+                //reg_type = .hi;
+                //} else reg_type = .lo;
+                //} else {
+                //reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                //rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                //}
+                //const prev_data = self.getRegisterVal(reg);
+                //const subtraction_data = self.getRegisterVal(rm);
+                //self.subToRegister(reg, reg_type, subtraction_data, is_wide_data);
+                //try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                //try self.printSetFlags(&writer);
+                //},
+                //.cmp_rtr => {
+                //const is_wide_reg = command.w.? == 1;
+                //const is_wide_data: RegType = if (is_wide_reg) .full else .lo;
+                //const diff: u8 = if (is_wide_reg) 0 else 8;
+                //var reg_8: Registers_8bit = undefined;
+                //var rm_8: Registers_8bit = undefined;
+                //var reg: Registers = undefined;
+                //var rm: Registers = undefined;
+                //var reg_type: RegType = .full;
+                //if (diff > 0) {
+                //reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                //rm_8 = std.meta.stringToEnum(Registers_8bit, registers[command.rm.?]).?;
+                //reg = reg_8.getRegister16bit();
+                //rm = reg_8.getRegister16bit();
+                //if (@intFromEnum(reg_8) < 4) {
+                //reg_type = .hi;
+                //} else reg_type = .lo;
+                //} else {
+                //reg = std.meta.stringToEnum(Registers, registers[command.reg.?]).?;
+                //rm = std.meta.stringToEnum(Registers, registers[command.rm.?]).?;
+                //}
+                //const subtraction_data = self.getRegisterVal(rm);
+                //self.cmp(reg, reg_type, subtraction_data, is_wide_data);
+                //try writer.print(" ", .{});
+                //try self.printSetFlags(&writer);
+                //},
                 .arithmetic_itm => {
                     //const ItmOp = enum(u8) {
                     //add = 0b00000000,
@@ -719,39 +895,43 @@ pub const SimulatorRegisters = struct {
                     //sub = 0b00000101,
                     //cmp = 0b00000111,
                     //};
-                    const is_wide_reg = command.w.? == 1;
-                    const is_wide_data: RegType = if (is_wide_reg and command.s.? == 0) .full else .lo;
-                    const diff: u8 = if (is_wide_reg) 0 else 8;
-                    var reg_8: Registers_8bit = undefined;
-                    var reg: Registers = undefined;
-                    var reg_type: RegType = .full;
-                    if (diff > 0) {
-                        reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
-                        reg = reg_8.getRegister16bit();
-                        if (@intFromEnum(reg_8) < 4) {
-                            reg_type = .hi;
-                        } else reg_type = .lo;
-                    } else {
-                        reg = std.meta.stringToEnum(Registers, registers[command.reg.? + 8]).?;
-                    }
-                    const prev_data = self.getRegisterVal(reg);
-                    switch (command.itm_op.?) {
-                        .add => {
-                            self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                            try self.printSetFlags(&writer);
+                    switch (command.mod.?) {
+                        0b11 => {
+                            const is_wide_reg = command.w.? == 1;
+                            const is_wide_data: RegType = if (is_wide_reg and command.s.? == 0) .full else .lo;
+                            const diff: u8 = if (is_wide_reg) 0 else 8;
+                            var reg_8: Registers_8bit = undefined;
+                            var reg: Registers = undefined;
+                            var reg_type: RegType = .full;
+                            if (diff > 0) {
+                                reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+                                reg = reg_8.getRegister16bit();
+                                if (@intFromEnum(reg_8) < 4) {
+                                    reg_type = .hi;
+                                } else reg_type = .lo;
+                            } else {
+                                reg = std.meta.stringToEnum(Registers, registers[command.reg.? + 8]).?;
+                            }
+                            const prev_data = self.getRegisterVal(reg);
+                            switch (command.itm_op.?) {
+                                .add => {
+                                    self.addToRegister(reg, reg_type, command.data.?, is_wide_data);
+                                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                    try self.printSetFlags(&writer);
+                                },
+                                .sub => {
+                                    self.subToRegister(reg, reg_type, command.data.?, is_wide_data);
+                                    try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
+                                    try self.printSetFlags(&writer);
+                                },
+                                .cmp => {
+                                    self.cmp(reg, reg_type, command.data.?, is_wide_data);
+                                    try self.printSetFlags(&writer);
+                                },
+                                else => unreachable,
+                            }
                         },
-                        .sub => {
-                            self.subToRegister(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                            try self.printSetFlags(&writer);
-                        },
-                        .cmp => {
-                            self.cmp(reg, reg_type, command.data.?, is_wide_data);
-                            try writer.print(" {s}: 0x{x}->0x{x} ", .{ @tagName(reg), prev_data, self.getRegisterVal(reg) });
-                            try self.printSetFlags(&writer);
-                        },
-                        else => unreachable,
+                        else => {},
                     }
                 },
 
@@ -830,6 +1010,16 @@ pub fn disassemble(buf: [6]u8, buf_pos: *u8, command: *Command) Io.Writer.Error!
             // Register/memory-to/from-register
             // mov, sub/cmp, add
             .mov_rtr, .cmp_rtr, .sub_rtr, .add_rtr, .adc_rtr => {
+                var itm_op: ?ItmOp = null;
+                switch (op) {
+                    .mov_rtr => {},
+                    .add_rtr => itm_op = .add,
+                    .sub_rtr => itm_op = .sub,
+                    .cmp_rtr => itm_op = .cmp,
+                    .adc_rtr => itm_op = .adc,
+                    else => unreachable,
+                }
+                command.itm_op = itm_op;
                 const op_str = op.getOpString();
 
                 try writer.print("{s} ", .{op_str});

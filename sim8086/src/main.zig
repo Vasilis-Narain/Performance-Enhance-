@@ -15,13 +15,23 @@ pub fn main(init: std.process.Init) !void {
         return error.InvalidCall;
     }
     var filepath: [:0]const u8 = undefined;
-    var execute: bool = false;
+    var execute = false;
+    var dump = false;
     if (args.len == 3) {
         if (std.mem.eql(u8, args[1], "-exec")) {
             filepath = args[2];
             execute = true;
         } else {
             std.debug.print("!{s} argument not recognized!\n", .{args[1]});
+            return error.InvalidCall;
+        }
+    } else if (args.len == 4) {
+        if (std.mem.eql(u8, args[2], "-exec") and std.mem.eql(u8, args[1], "-dump")) {
+            filepath = args[3];
+            execute = true;
+            dump = true;
+        } else {
+            std.debug.print("!arguments not recognized!\n", .{});
             return error.InvalidCall;
         }
     } else {
@@ -35,6 +45,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface; // Always remember `&`.
+    //
 
     // Opening file
     if (Io.Dir.cwd().openFile(io, filepath, .{
@@ -57,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
             try stdout_writer.print("bits 16\n\n", .{});
         }
 
-        var instructions_executed: u16 = 0;
+        var instructions_executed: u64 = 0;
         simRegisters.registers[@intFromEnum(ip_reg)] = 0;
 
         while (simRegisters.registers[@intFromEnum(ip_reg)] < bytes_read) : (instructions_executed += 1) {
@@ -89,6 +100,15 @@ pub fn main(init: std.process.Init) !void {
         try stdout_writer.print("\n", .{});
     } else |err| {
         return err;
+    }
+    if (dump) {
+        var outFile = try Io.Dir.cwd().createFile(io, "output.data", .{});
+        defer outFile.close(io);
+        var fileout_buffer: [1024]u8 = undefined;
+        var file_writer = outFile.writer(io, &fileout_buffer);
+        const fileout_writer = &file_writer.interface;
+        try fileout_writer.writeAll(&simRegisters.memory);
+        try file_writer.flush();
     }
     try stdout_writer.flush();
 }
