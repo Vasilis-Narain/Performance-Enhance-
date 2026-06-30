@@ -473,6 +473,7 @@ pub const SimulatorRegisters = struct {
                                     }
                                 } else {
                                     reg_8 = std.meta.stringToEnum(Registers_8bit, registers[command.reg.?]).?;
+
                                     reg = reg_8.getRegister16bit();
                                     if (@intFromEnum(reg_8) < 4) {
                                         reg_type = .hi;
