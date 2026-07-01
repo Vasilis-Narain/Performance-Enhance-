@@ -45,7 +45,6 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface; // Always remember `&`.
-    //
 
     // Opening file
     if (Io.Dir.cwd().openFile(io, filepath, .{
