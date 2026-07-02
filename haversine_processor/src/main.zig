@@ -11,6 +11,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
     var uniform: bool = undefined;
+    var generate: bool = undefined;
     var seed: u32 = undefined;
     var n: u32 = undefined;
 
@@ -18,6 +19,7 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("Usage: -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
         return;
     } else {
+        generate = true;
         uniform = blk: {
             if (std.mem.eql(u8, args[2], "uniform")) {
                 break :blk true;
@@ -39,19 +41,33 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
+    try stdout_writer.print(
+        \\Method: {s}
+        \\seed: {d}
+        \\n: {d}
+        \\
+    , .{ if (uniform) "uniform" else "cluster", seed, n });
 
-    // TODO(vasilis): do the thing
-    try haversine_processor.generateInput(stdout_writer, uniform, seed, n);
-
-    if (false) {
-        // TODO: output the thing
+    if (generate) {
+        // Init json output
         var outFile = try Io.Dir.cwd().createFile(io, "input/haversine_input.json", .{});
         defer outFile.close(io);
         var fileout_buffer: [1024]u8 = undefined;
         var fileout_writer = outFile.writer(io, &fileout_buffer);
         const file_writer = &fileout_writer.interface;
-        try file_writer.writeAll(); // TODO: might be wise to pass what we're writing as an argument :D
+
+        // Init byte output
+        var byteFile = try Io.Dir.cwd().createFile(io, "input/haversine_answer.f64", .{});
+        defer byteFile.close(io);
+        var byteout_buffer: [1024]u8 = undefined;
+        var byteout_writer = byteFile.writer(io, &byteout_buffer);
+        const byte_writer = &byteout_writer.interface;
+
+        var average: f64 = 0;
+        try haversine_processor.generateInput(byte_writer, file_writer, uniform, seed, n, &average);
+        try stdout_writer.print("\nExpected sum: {d:.8}\n", .{average});
         try file_writer.flush();
+        try byte_writer.flush();
     }
 
     // FLUSHING!
