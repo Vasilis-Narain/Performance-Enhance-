@@ -10,8 +10,19 @@ const Io = std.Io;
 ///     {...},
 ///     {...}
 /// ]}`
-pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, seed: u32, n: u32, statistic: *f64) Io.Writer.Error!void {
-    assert(n > 0);
+///
+/// Also generates a `.f64` containing the individual haversine distance
+/// calculations in byte format, with the last 8 bytes being the statistic (average).
+///
+/// inputs:
+///    `byteWriter`: Writer instance to write the .f64 file.
+///    `writer`: Writer instance to write the .json file.
+///    `uniform`: `true` for uniform sampling, `false` for cluster sampling
+///    `seed`: random seed
+///    `pairs_to_generate`: pairs to generate
+///    `statistic`: reference to number holding total average
+pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, uniform: bool, seed: u32, pairs_to_generate: u32, statistic: *f64) Io.Writer.Error!void {
+    assert(pairs_to_generate > 0);
 
     try writer.print("{{ \"pairs\" : [\n", .{});
 
@@ -24,7 +35,7 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
     const pairs_per_cluster: u32 = blk: {
         if (!uniform) {
             const cluster_count: f64 = @floatFromInt(@intFromEnum(rand.enumValue(ClusterCount)));
-            const n_float: f64 = @floatFromInt(n);
+            const n_float: f64 = @floatFromInt(pairs_to_generate);
             break :blk @intFromFloat(n_float / cluster_count);
         } else {
             break :blk undefined; // undefined here so program crashes if we accidentally use it
@@ -33,7 +44,7 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
 
     var cluster: Cluster = .{};
     var i: u32 = 0;
-    while (i < n) : (i += 1) {
+    while (i < pairs_to_generate) : (i += 1) {
         if (!uniform and (i % pairs_per_cluster == 0)) {
             const size = rand.intRangeAtMost(u8, 8, 80);
             cluster.randomiseCluster(rand, size);
@@ -44,7 +55,7 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
         const y1 = floatRangeAtMost(rand, f64, cluster.min_y, cluster.max_y);
         const haversine_distance = hs.referenceHaversine(x0, y0, x1, y1, hs.EARTH_RADIUS);
         const haversine_bits: u64 = @bitCast(haversine_distance);
-        try sum_writer.writeInt(u64, haversine_bits, .native);
+        try byteWriter.writeInt(u64, haversine_bits, .native);
         statistic.* += haversine_distance;
 
         if (i > 0) try writer.print(",\n", .{});
@@ -53,9 +64,9 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
             .{ x0, y0, x1, y1 },
         );
     }
-    statistic.* /= @as(f64, @floatFromInt(n));
+    statistic.* /= @as(f64, @floatFromInt(pairs_to_generate));
     const stat_bits: u64 = @bitCast(statistic.*);
-    try sum_writer.writeInt(u64, stat_bits, .native);
+    try byteWriter.writeInt(u64, stat_bits, .native);
     try writer.print("\n]}}", .{});
 }
 
