@@ -15,23 +15,51 @@ pub fn main(init: std.process.Init) !void {
     var seed: u32 = undefined;
     var n: u32 = undefined;
 
-    if (args.len != 5 or !std.mem.eql(u8, args[1], "-generate")) {
-        std.debug.print("Usage: -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
+    if (args.len < 2) {
+        std.debug.print(
+            \\Usage:
+            \\  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]" 
+            \\  -process [path to file]
+            \\ 
+        ,
+            .{},
+        );
         return;
+    }
+
+    if (std.mem.eql(u8, args[1], "-generate")) {
+        if (args.len != 5) {
+            std.debug.print("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
+            return;
+        } else {
+            generate = true;
+            uniform = blk: {
+                if (std.mem.eql(u8, args[2], "uniform")) {
+                    break :blk true;
+                } else if (std.mem.eql(u8, args[2], "cluster")) {
+                    break :blk false;
+                } else {
+                    std.debug.print("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
+                    return;
+                }
+            };
+            seed = cstring_to_int(args[3]);
+            n = cstring_to_int(args[4]);
+        }
+    } else if (std.mem.eql(u8, args[1], "-process")) {
+        if (args.len < 3) {
+            std.debug.print("Usage:\n  -process [path to file]\n", .{});
+            return;
+        }
     } else {
-        generate = true;
-        uniform = blk: {
-            if (std.mem.eql(u8, args[2], "uniform")) {
-                break :blk true;
-            } else if (std.mem.eql(u8, args[2], "cluster")) {
-                break :blk false;
-            } else {
-                std.debug.print("Usage: -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
-                return;
-            }
-        };
-        seed = cstring_to_int(args[3]);
-        n = cstring_to_int(args[4]);
+        std.debug.print(
+            \\Usage:
+            \\  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]" 
+            \\  -process [path to file]
+            \\ 
+        ,
+            .{},
+        );
     }
 
     // In order to do I/O operations need an `Io` instance.
@@ -41,14 +69,15 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
-    try stdout_writer.print(
-        \\Method: {s}
-        \\seed: {d}
-        \\n: {d}
-        \\
-    , .{ if (uniform) "uniform" else "cluster", seed, n });
 
     if (generate) {
+        try stdout_writer.print(
+            \\Method: {s}
+            \\seed: {d}
+            \\n: {d}
+            \\
+        , .{ if (uniform) "uniform" else "cluster", seed, n });
+
         // Init json output
         var outFile = try Io.Dir.cwd().createFile(io, "input/haversine_input.json", .{});
         defer outFile.close(io);

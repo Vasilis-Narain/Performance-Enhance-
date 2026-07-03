@@ -8,7 +8,7 @@ const Io = std.Io;
 /// `{ "pairs" : [
 ///     {"x0": 3.0, "y0": 7.0, "x1": 11.879834 , "y1": 18.23424109 },
 ///     {...},
-///     {...} //notice no end comma!
+///     {...}
 /// ]}`
 pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, seed: u32, n: u32, statistic: *f64) Io.Writer.Error!void {
     assert(n > 0);
@@ -20,36 +20,28 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
     // this pattern is very common in zig stdlib.
     var prng: std.Random.DefaultPrng = .init(seed);
     const rand = prng.random();
+
     const pairs_per_cluster: u32 = blk: {
         if (!uniform) {
             const cluster_count: f64 = @floatFromInt(@intFromEnum(rand.enumValue(ClusterCount)));
             const n_float: f64 = @floatFromInt(n);
             break :blk @intFromFloat(n_float / cluster_count);
         } else {
-            break :blk undefined;
+            break :blk undefined; // undefined here so program crashes if we accidentally use it
         }
     };
 
+    var cluster: Cluster = .{};
     var i: u32 = 0;
-    var min_x: f64 = undefined;
-    var max_x: f64 = undefined;
-    var min_y: f64 = undefined;
-    var max_y: f64 = undefined;
-    if (uniform) {
-        min_x = -180;
-        max_x = 180;
-        min_y = -90;
-        max_y = 90;
-    }
     while (i < n) : (i += 1) {
         if (!uniform and (i % pairs_per_cluster == 0)) {
             const size = rand.intRangeAtMost(u8, 8, 80);
-            generateCluster(rand, size, &min_x, &max_x, &min_y, &max_y);
+            cluster.randomiseCluster(rand, size);
         }
-        const x0 = floatRangeAtMost(rand, f64, min_x, max_x);
-        const y0 = floatRangeAtMost(rand, f64, min_y, max_y);
-        const x1 = floatRangeAtMost(rand, f64, min_x, max_x);
-        const y1 = floatRangeAtMost(rand, f64, min_y, max_y);
+        const x0 = floatRangeAtMost(rand, f64, cluster.min_x, cluster.max_x);
+        const y0 = floatRangeAtMost(rand, f64, cluster.min_y, cluster.max_y);
+        const x1 = floatRangeAtMost(rand, f64, cluster.min_x, cluster.max_x);
+        const y1 = floatRangeAtMost(rand, f64, cluster.min_y, cluster.max_y);
         const haversine_distance = hs.referenceHaversine(x0, y0, x1, y1, hs.EARTH_RADIUS);
         const haversine_bits: u64 = @bitCast(haversine_distance);
         try sum_writer.writeInt(u64, haversine_bits, .native);
@@ -67,26 +59,43 @@ pub fn generateInput(sum_writer: *Io.Writer, writer: *Io.Writer, uniform: bool, 
     try writer.print("\n]}}", .{});
 }
 
+/// Enum to randomise discrete Cluster Counts.
+///
+/// Not meant to be used explitictly.
 const ClusterCount = enum(u8) {
     _16 = 16,
     _32 = 32,
     _64 = 64,
 };
 
+/// Defaults to full sphere cluster.
+const Cluster = struct {
+    min_x: f64 = -180,
+    max_x: f64 = 180,
+    min_y: f64 = -90,
+    max_y: f64 = 90,
+
+    /// Generates a random cluster of specified size.
+    ///
+    /// Stores result in min/max x/y
+    fn randomiseCluster(self: *@This(), rand: std.Random, size: u8) void {
+        self.min_y = floatRangeAtMost(rand, f64, -90, 90 - size);
+        self.max_y = self.min_y + size;
+
+        self.min_x = floatRangeAtMost(rand, f64, -180, 180 - size);
+        self.max_x = self.min_x + size;
+    }
+};
+
 /// Returns random float in the range [min, max)
 /// min and max must match the desired return type
 fn floatRangeAtMost(rand: std.Random, comptime T: type, min: T, max: T) T {
+    comptime {
+        switch (@typeInfo(T)) {
+            .float => {},
+            else => @compileError("floatRangeAtMost only accepts float types, found " ++ @typeName(T)),
+        }
+    }
     assert(max > min);
     return min + (max - min) * rand.float(T);
-}
-
-/// Generates a random cluster of specified size.
-///
-/// Stores result in min/max x/y
-fn generateCluster(rand: std.Random, size: u8, min_x: *f64, max_x: *f64, min_y: *f64, max_y: *f64) void {
-    min_y.* = floatRangeAtMost(rand, f64, -90, 90 - size);
-    max_y.* = min_y.* + size;
-
-    min_x.* = floatRangeAtMost(rand, f64, -180, 180 - size);
-    max_x.* = min_x.* + size;
 }
