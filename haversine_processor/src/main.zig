@@ -1,4 +1,4 @@
-///! CLI File
+//! CLI File
 const std = @import("std");
 const Io = std.Io;
 
@@ -11,7 +11,7 @@ pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    const opts: Opts = parseArgsCli(args) catch return;
+    var opts: Opts = parseArgsCli(args) catch return;
 
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
@@ -31,9 +31,10 @@ pub fn main(init: std.process.Init) !void {
                 \\
             , .{ @tagName(method), opts.seed, opts.n });
 
+            var file_name_buf: [256]u8 = undefined;
+
             // Init json output
-            var fileNameBuf: [256]u8 = undefined;
-            const outFileName = try buildOutFileName(&fileNameBuf, method, .json, opts.n);
+            const outFileName = try buildOutFileName(&file_name_buf, method, .json, opts.n);
             var outFile = try Io.Dir.cwd().createFile(io, outFileName, .{});
             defer outFile.close(io);
             var fileout_buffer: [1024]u8 = undefined;
@@ -41,16 +42,15 @@ pub fn main(init: std.process.Init) !void {
             const file_writer = &fileout_writer.interface;
 
             // Init byte output
-            const byteFileName = try buildOutFileName(&fileNameBuf, method, .f64, opts.n);
+            const byteFileName = try buildOutFileName(&file_name_buf, method, .f64, opts.n);
             var byteFile = try Io.Dir.cwd().createFile(io, byteFileName, .{});
             defer byteFile.close(io);
             var byteout_buffer: [1024]u8 = undefined;
             var byteout_writer = byteFile.writer(io, &byteout_buffer);
             const byte_writer = &byteout_writer.interface;
 
-            var average: f64 = 0;
-            try Haversine.generateInput(byte_writer, file_writer, opts.uniform, opts.seed, opts.n, &average);
-            try stdout_writer.print("\nExpected sum: {d:.8}\n", .{average});
+            try Haversine.generateInput(byte_writer, file_writer, &opts);
+            try stdout_writer.print("\nExpected sum: {d:.8}\n", .{opts.statistic});
             try file_writer.flush();
             try byte_writer.flush();
         },
@@ -81,13 +81,14 @@ const Opts = struct {
     call_type: CallType = undefined,
     seed: u32 = undefined,
     n: u32 = undefined,
+    statistic: f64 = 0,
 };
 
 /// Parses CLI args and returns Opts struct.
 fn parseArgsCli(args: []const []const u8) !Opts {
     var opts: Opts = .{};
     if (args.len < 2) {
-        std.debug.print(
+        std.log.err(
             \\Usage:
             \\  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]" 
             \\  -process [path to json] [path to .f64]
@@ -100,7 +101,7 @@ fn parseArgsCli(args: []const []const u8) !Opts {
 
     if (std.mem.eql(u8, args[1], "-generate")) {
         if (args.len != 5) {
-            std.debug.print("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
+            std.log.err("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
             return error.InvalidUsage;
         } else {
             opts.call_type = .generate;
@@ -110,40 +111,40 @@ fn parseArgsCli(args: []const []const u8) !Opts {
                 } else if (std.mem.eql(u8, args[2], "cluster")) {
                     break :blk false;
                 } else {
-                    std.debug.print("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
+                    std.log.err("Usage:\n  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]\n", .{});
                     return error.InvalidUsage;
                 }
             };
-            opts.seed = string_to_int(u32, args[3]) catch |err| switch (err) {
+            opts.seed = stringToInt(u32, args[3]) catch |err| switch (err) {
                 error.InvalidDigit => {
-                    std.debug.print("seed arg must be numeric and positive! Found {s}\n", .{args[3]});
+                    std.log.err("seed arg must be numeric and positive! Found {s}\n", .{args[3]});
                     return err;
                 },
                 error.Overflow => {
-                    std.debug.print("seed value too large!\n", .{});
+                    std.log.err("seed value too large!\n", .{});
                     return err;
                 },
             };
-            opts.n = string_to_int(u32, args[4]) catch |err| switch (err) {
+            opts.n = stringToInt(u32, args[4]) catch |err| switch (err) {
                 error.InvalidDigit => {
-                    std.debug.print("number of coordinate pairs arg must be numeric and positive! Found {s}\n", .{args[4]});
+                    std.log.err("number of coordinate pairs arg must be numeric and positive! Found {s}\n", .{args[4]});
                     return err;
                 },
                 error.Overflow => {
-                    std.debug.print("number of coordinate pairs too large!\n", .{});
+                    std.log.err("number of coordinate pairs too large!\n", .{});
                     return err;
                 },
             };
         }
     } else if (std.mem.eql(u8, args[1], "-process")) {
         if (args.len < 3) {
-            std.debug.print("Usage:\n  -process [path to json] [path to .f64]\n", .{});
+            std.log.err("Usage:\n  -process [path to json] [path to .f64]\n", .{});
             return error.InvalidUsage;
         } else {
             opts.call_type = .process;
         }
     } else {
-        std.debug.print(
+        std.log.err(
             \\Usage:
             \\  -generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]" 
             \\  -process [path to json] [path to .f64]
@@ -166,23 +167,23 @@ fn buildOutFileName(buf: []u8, method: GenMethod, fileType: OutType, n: u32) ![]
 }
 
 /// Can only return unsigned types. Or else...
-fn string_to_int(comptime return_T: type, str: []const u8) !return_T {
+fn stringToInt(comptime T: type, str: []const u8) !T {
     comptime {
-        switch (@typeInfo(return_T)) {
+        switch (@typeInfo(T)) {
             .int => |info| {
                 if (info.signedness != .unsigned or info.bits < 8) {
-                    @compileError("cstring_to_int() can only return unsigned integer types (at least u8), found" ++ @tagName(@typeInfo(return_T).int.signedness));
+                    @compileError("stringToInt() can only return unsigned integer types (at least u8), found" ++ @tagName(@typeInfo(T).int.signedness));
                 }
             },
-            else => @compileError("cstring_to_int() can only return unsigned integer types (at least u8), found" ++ @tagName(@typeInfo(return_T).int.signedness)),
+            else => @compileError("stringToInt() can only return unsigned integer types (at least u8), found" ++ @typeName(T)),
         }
     }
 
     // Note(vasilis) these are comptime
-    const max_by_10: return_T = std.math.maxInt(return_T) / 10;
-    const max_mod_10: return_T = std.math.maxInt(return_T) % 10;
+    const max_by_10: T = std.math.maxInt(T) / 10;
+    const max_mod_10: T = std.math.maxInt(T) % 10;
 
-    var result: return_T = 0;
+    var result: T = 0;
     for (str) |char| {
         if (char < '0' or char > '9') {
             return error.InvalidDigit;
@@ -196,4 +197,13 @@ fn string_to_int(comptime return_T: type, str: []const u8) !return_T {
         result = result * 10 + digit;
     }
     return result;
+}
+
+test "string to int" {
+    const str1 = "179a8";
+    try std.testing.expectEqual(error.InvalidDigit, stringToInt(u32, str1[0..]));
+    const str2 = "17998";
+    try std.testing.expectEqual(17998, stringToInt(u32, str2[0..]));
+    const str3 = "179989877283746986109238";
+    try std.testing.expectEqual(error.Overflow, stringToInt(u32, str3[0..]));
 }

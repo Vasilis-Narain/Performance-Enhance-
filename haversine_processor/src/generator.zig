@@ -17,25 +17,27 @@ const Io = std.Io;
 /// inputs:
 ///    `byteWriter`: Writer instance to write the .f64 file.
 ///    `writer`: Writer instance to write the .json file.
-///    `uniform`: `true` for uniform sampling, `false` for cluster sampling
-///    `seed`: random seed
-///    `pairs_to_generate`: pairs to generate
-///    `statistic`: reference to number holding total average
-pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, uniform: bool, seed: u32, pairs_to_generate: u32, statistic: *f64) Io.Writer.Error!void {
-    assert(pairs_to_generate > 0);
+///    `opts`: Pointer to a var struct that has at least these fields: &.{
+///        `uniform`: bool - `true` for uniform sampling, `false` for cluster sampling
+///        `seed`: u32 - random seed
+///        `n`: u32 - pairs to generate
+///        `statistic`: f64 - number holding statistic (for now average) of sums.
+///    }
+pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, opts: anytype) Io.Writer.Error!void {
+    assert(opts.n > 0);
 
     try writer.print("{{ \"pairs\" : [\n", .{});
 
     // This is how we do random numbers in zig.
     // NOTE(vasilis): Try to remember how i figured this out as
     // this pattern is very common in zig stdlib.
-    var prng: std.Random.DefaultPrng = .init(seed);
+    var prng: std.Random.DefaultPrng = .init(opts.seed);
     const rand = prng.random();
 
     const pairs_per_cluster: u32 = blk: {
-        if (!uniform) {
+        if (!opts.uniform) {
             const cluster_count: f64 = @floatFromInt(@intFromEnum(rand.enumValue(ClusterCount)));
-            const n_float: f64 = @floatFromInt(pairs_to_generate);
+            const n_float: f64 = @floatFromInt(opts.n);
             break :blk @intFromFloat(n_float / cluster_count);
         } else {
             break :blk undefined; // undefined here so program crashes if we accidentally use it
@@ -44,8 +46,8 @@ pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, uniform: bool, 
 
     var cluster: Cluster = .{};
     var i: u32 = 0;
-    while (i < pairs_to_generate) : (i += 1) {
-        if (!uniform and (i % pairs_per_cluster == 0)) {
+    while (i < opts.n) : (i += 1) {
+        if (!opts.uniform and (i % pairs_per_cluster == 0)) {
             const size = rand.intRangeAtMost(u8, 8, 80);
             cluster.randomiseCluster(rand, size);
         }
@@ -56,7 +58,7 @@ pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, uniform: bool, 
         const haversine_distance = hs.referenceHaversine(x0, y0, x1, y1, hs.EARTH_RADIUS);
         const haversine_bits: u64 = @bitCast(haversine_distance);
         try byteWriter.writeInt(u64, haversine_bits, .native);
-        statistic.* += haversine_distance;
+        opts.statistic += haversine_distance;
 
         if (i > 0) try writer.print(",\n", .{});
         try writer.print(
@@ -64,8 +66,8 @@ pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, uniform: bool, 
             .{ x0, y0, x1, y1 },
         );
     }
-    statistic.* /= @as(f64, @floatFromInt(pairs_to_generate));
-    const stat_bits: u64 = @bitCast(statistic.*);
+    opts.statistic /= @as(f64, @floatFromInt(opts.n));
+    const stat_bits: u64 = @bitCast(opts.statistic);
     try byteWriter.writeInt(u64, stat_bits, .native);
     try writer.print("\n]}}", .{});
 }
