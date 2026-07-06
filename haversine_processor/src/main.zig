@@ -44,8 +44,8 @@ pub fn main(init: std.process.Init) !void {
                     return;
                 }
             };
-            seed = cstring_to_int(args[3]);
-            n = cstring_to_int(args[4]);
+            seed = cstring_to_int(u32, args[3]);
+            n = cstring_to_int(u32, args[4]);
         }
     } else if (std.mem.eql(u8, args[1], "-process")) {
         if (args.len < 3) {
@@ -68,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
 
-    // This is how you print Hello World kids
+    // This is how you print "Hello World" kids
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
@@ -139,14 +139,63 @@ fn buildOutFileName(buf: []u8, method: GenMethod, fileType: OutType, n: u32) ![]
 
 /// [NOTE(vasilis)]: this is not safe. It assumes you pass in a string that is a valid number.
 /// Why? All my homies hate strings that's why.
-fn cstring_to_int(str: [:0]const u8) u32 {
+///
+/// Can only return unsigned types. Or else...
+fn cstring_to_int(comptime return_T: type, str: [:0]const u8) return_T {
+    comptime {
+        switch (@typeInfo(return_T)) {
+            .int => |info| {
+                if (info.signedness != .unsigned) {
+                    @compileError("cstring_to_int() can only return unsigned integer types, found" ++ @tagName(@typeInfo(return_T).int.signedness));
+                }
+            },
+            else => @compileError("cstring_to_int() can only return unsigned integer types, found" ++ @tagName(@typeInfo(return_T).int.signedness)),
+        }
+    }
     var result: u32 = 0;
     var len: u8 = 0; // 255 digits are enough to encode a u32...
     while (str[len] != 0) : (len += 1) {}
     var i: u8 = 0;
     while (i < len) : (i += 1) {
         const current = str[i] - 48;
-        result += @intCast(current * std.math.pow(u32, 10, @intCast(len - (i + 1))));
+        result += @intCast(current * pow(return_T, 10, @intCast(len - (i + 1))));
     }
+    return result;
+}
+
+/// Returns x^y for unsigned integers only.
+/// Will comptime crash if any other type is passed.
+/// Will also panic on overflow.
+fn pow(comptime T: type, x: T, y: T) T {
+    comptime {
+        switch (@typeInfo(T)) {
+            .int => |info| {
+                if (info.signedness != .unsigned) {
+                    @compileError("pow() only accepts unsigned integer types, found" ++ @tagName(@typeInfo(T).int.signedness));
+                }
+            },
+            else => @compileError("pow() only accepts unsigned integer types, found" ++ @typeName(T)),
+        }
+    }
+
+    var result: T = 1;
+    var exp = y;
+    var base = x;
+
+    while (exp != 0) {
+        if ((exp & 1) != 0) {
+            const m = @mulWithOverflow(result, base);
+            if (m[1] != 0) @panic("overflow");
+            result = m[0];
+        }
+        exp >>= 1;
+
+        if (exp != 0) {
+            const m = @mulWithOverflow(base, base);
+            if (m[1] != 0) @panic("overflow");
+            base = m[0];
+        }
+    }
+
     return result;
 }
