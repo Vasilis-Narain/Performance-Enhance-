@@ -1,19 +1,22 @@
 //! CLI File
+//! CLI level API:
+//!
+//! * `-generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]`
+//! * `-process [path to .json] [path to .f64]
 const std = @import("std");
 const Io = std.Io;
 
 const Haversine = @import("haversine");
 
-/// CLI level API:
-///     `-generate [uniform/cluster] [random seed] [number of coordinate pairs to generate]`
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    var opts: Opts = parseArgsCli(args) catch return;
+    var opts: Opts = parseArgsCli(arena, args) catch return;
 
     // In order to do I/O operations need an `Io` instance.
+    // Note(vasilis): this is using the platform default IO implementation
     const io = init.io;
 
     // This is how you print "Hello World" kids
@@ -34,19 +37,19 @@ pub fn main(init: std.process.Init) !void {
             var file_name_buf: [256]u8 = undefined;
 
             // Init json output
-            const outFileName = try buildOutFileName(&file_name_buf, method, .json, opts.n);
-            var outFile = try Io.Dir.cwd().createFile(io, outFileName, .{});
-            defer outFile.close(io);
+            const out_file_name = try buildOutFileName(&file_name_buf, method, .json, opts.n);
+            var out_file = try Io.Dir.cwd().createFile(io, out_file_name, .{});
+            defer out_file.close(io);
             var fileout_buffer: [1024]u8 = undefined;
-            var fileout_writer = outFile.writer(io, &fileout_buffer);
+            var fileout_writer = out_file.writer(io, &fileout_buffer);
             const file_writer = &fileout_writer.interface;
 
             // Init byte output
-            const byteFileName = try buildOutFileName(&file_name_buf, method, .f64, opts.n);
-            var byteFile = try Io.Dir.cwd().createFile(io, byteFileName, .{});
-            defer byteFile.close(io);
+            const byte_file_name = try buildOutFileName(&file_name_buf, method, .f64, opts.n);
+            var byte_file = try Io.Dir.cwd().createFile(io, byte_file_name, .{});
+            defer byte_file.close(io);
             var byteout_buffer: [1024]u8 = undefined;
-            var byteout_writer = byteFile.writer(io, &byteout_buffer);
+            var byteout_writer = byte_file.writer(io, &byteout_buffer);
             const byte_writer = &byteout_writer.interface;
 
             try Haversine.generateInput(byte_writer, file_writer, &opts);
@@ -54,11 +57,29 @@ pub fn main(init: std.process.Init) !void {
             try file_writer.flush();
             try byte_writer.flush();
         },
-        .process => {},
+        .process => {
+            // Not bothering with catching errors cause realistically if we can't open the files we should crash.
+
+            // Init json file reader
+            var json_file = try Io.Dir.cwd().openFile(io, opts.json_file_name, .{ .mode = .read_only });
+            defer json_file.close(io);
+            var json_buffer: [1024]u8 = undefined;
+            var json_file_reader = json_file.reader(io, &json_buffer);
+            const json_reader = &json_file_reader.interface;
+
+            // Init byte file reader
+            var byte_file = try Io.Dir.cwd().openFile(io, opts.byte_file_name, .{ .mode = .read_only });
+            defer byte_file.close(io);
+            var byte_buffer: [1024]u8 = undefined;
+            var byte_file_reader = byte_file.reader(io, &byte_buffer);
+            const byte_reader = &byte_file_reader.interface;
+
+            try Haversine.parseJson(json_reader, byte_reader, &opts);
+        },
     }
 
     // FLUSHING!
-    try stdout_writer.flush(); // Don't forget to flush!
+    try stdout_writer.flush();
 }
 
 const CallType = enum {
@@ -77,15 +98,17 @@ const GenMethod = enum {
 };
 
 const Opts = struct {
-    uniform: bool = undefined,
     call_type: CallType = undefined,
+    uniform: bool = undefined,
     seed: u32 = undefined,
     n: u32 = undefined,
     statistic: f64 = 0,
+    json_file_name: []const u8 = undefined,
+    byte_file_name: []const u8 = undefined,
 };
 
 /// Parses CLI args and returns Opts struct.
-fn parseArgsCli(args: []const []const u8) !Opts {
+fn parseArgsCli(allocator: std.mem.Allocator, args: []const []const u8) !Opts {
     var opts: Opts = .{};
     if (args.len < 2) {
         std.log.err(
@@ -142,6 +165,8 @@ fn parseArgsCli(args: []const []const u8) !Opts {
             return error.InvalidUsage;
         } else {
             opts.call_type = .process;
+            opts.json_file_name = try allocator.dupe(u8, args[2]);
+            opts.byte_file_name = try allocator.dupe(u8, args[3]);
         }
     } else {
         std.log.err(

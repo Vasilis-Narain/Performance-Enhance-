@@ -3,26 +3,29 @@ const assert = std.debug.assert;
 const hs = @import("haversine.zig");
 const Io = std.Io;
 
-/// Generates input data for Haversine Distance Problem as `json`:
+/// Generates input data for Haversine Distance Problem as `json` (all numbers to 16 decimal places):
 ///
-/// `{ "pairs" : [
+/// ```json
+/// { "pairs" : [
 ///     {"x0": 3.0, "y0": 7.0, "x1": 11.879834 , "y1": 18.23424109 },
 ///     {...},
 ///     {...}
-/// ]}`
+/// ]}
+/// ```
 ///
-/// Also generates a `.f64` containing the individual haversine distance
+/// Also generates a `.f64` file containing the individual haversine distance
 /// calculations in byte format, with the last 8 bytes being the statistic (average).
 ///
-/// inputs:
-///    `byteWriter`: Writer instance to write the .f64 file.
-///    `writer`: Writer instance to write the .json file.
-///    `opts`: Pointer to a var struct that has at least these fields: &.{
-///        `uniform`: bool - `true` for uniform sampling, `false` for cluster sampling
-///        `seed`: u32 - random seed
-///        `n`: u32 - pairs to generate
-///        `statistic`: f64 - number holding statistic (for now average) of sums.
-///    }
+/// **Inputs:**
+///
+/// * `byteWriter`: Writer instance to write the `.f64` file.
+/// * `writer`: Writer instance to write the `.json` file.
+/// * `opts`: Pointer to a var struct that has at least these fields:
+///     * `uniform: bool` - `true` for uniform sampling, `false` for cluster sampling
+///     * `seed: u32` - random seed
+///     * `n: u32` - pairs to generate
+///     * `statistic: f64` - number holding statistic (for now average) of sums.
+///
 pub fn generateInput(byteWriter: *Io.Writer, writer: *Io.Writer, opts: anytype) Io.Writer.Error!void {
     assert(opts.n > 0);
 

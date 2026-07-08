@@ -1,4 +1,6 @@
-///! This file is the API boundary.
-const InputGenerator = @import("generator.zig");
+//! API boundary.
+const Generator = @import("generator.zig");
+const Parser = @import("parser.zig");
 
-pub const generateInput = InputGenerator.generateInput;
+pub const generateInput = Generator.generateInput;
+pub const parseJson = Parser.parseJson;
