@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const profiler_mod = profiler_dep.module("profiler");
 
     // add modules (aka published imports)
     const mod = b.addModule("haversine", .{
@@ -24,7 +25,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "haversine", .module = mod },
-                .{ .name = "profiler", .module = profiler_dep.module("profiler") },
+                .{ .name = "profiler", .module = profiler_mod },
             },
         }),
     });
