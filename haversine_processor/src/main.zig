@@ -63,18 +63,42 @@ pub fn main(init: std.process.Init) !void {
             // Init json file reader
             var json_file = try Io.Dir.cwd().openFile(io, opts.json_file_name, .{ .mode = .read_only });
             defer json_file.close(io);
-            var json_buffer: [1024]u8 = undefined;
+            var json_buffer: [4096]u8 = undefined;
             var json_file_reader = json_file.reader(io, &json_buffer);
             const json_reader = &json_file_reader.interface;
 
             // Init byte file reader
             var byte_file = try Io.Dir.cwd().openFile(io, opts.byte_file_name, .{ .mode = .read_only });
             defer byte_file.close(io);
-            var byte_buffer: [1024]u8 = undefined;
+            const byte_file_size = (try byte_file.stat(io)).size;
+            var byte_buffer: [8]u8 = undefined;
             var byte_file_reader = byte_file.reader(io, &byte_buffer);
             const byte_reader = &byte_file_reader.interface;
 
-            try Haversine.parseJson(json_reader, byte_reader, &opts);
+            // Only need last 8 bytes (an f64) for the reference sum
+            try byte_file_reader.seekTo(byte_file_size - 8);
+            const last8 = try byte_reader.take(8);
+            const reference_sum: f64 = @bitCast(std.mem.readInt(u64, last8[0..8], .native)); // Handles endianness.
+
+            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
+            const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
+
+            try stdout_writer.print(
+                \\Pair count: {d},
+                \\Haversine sum: {d},
+                \\
+                \\Validation:
+                \\Reference sum: {d},
+                \\Difference: {d}
+                \\
+            ,
+                .{
+                    points.count,
+                    haversine_sum,
+                    reference_sum,
+                    haversine_sum - reference_sum,
+                },
+            );
         },
     }
 
