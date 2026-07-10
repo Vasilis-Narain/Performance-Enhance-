@@ -7,10 +7,15 @@ const std = @import("std");
 const Io = std.Io;
 
 const Haversine = @import("haversine");
+const Profiler = @import("profiler");
+const metrics = Profiler.metrics;
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
+
+    const rdtsc = metrics.readCpuTimer();
+    std.debug.print("RDTSC: {d}\n", .{rdtsc});
 
     const args = try init.minimal.args.toSlice(arena);
     var opts: Opts = parseArgsCli(arena, args) catch return;
@@ -84,11 +89,11 @@ pub fn main(init: std.process.Init) !void {
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
             try stdout_writer.print(
-                \\Pair count: {d},
-                \\Haversine sum: {d},
+                \\Pair count: {d}
+                \\Haversine sum average: {d}
                 \\
                 \\Validation:
-                \\Reference sum: {d},
+                \\Reference sum: {d}
                 \\Difference: {d}
                 \\
             ,
