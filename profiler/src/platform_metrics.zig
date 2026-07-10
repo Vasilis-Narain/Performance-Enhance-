@@ -45,6 +45,7 @@ pub inline fn readCpuTimer() u64 {
         : [low] "={eax}" (low),
           [hi] "={edx}" (hi),
     );
+
     return (@as(u64, hi) << 32) | @as(u64, low);
 }
 
@@ -78,5 +79,6 @@ test "metrics cpu timer" {
     const cpu_end = readCpuTimer();
     const cpu_elapsed = cpu_end - cpu_start;
 
+    // For obvious reasons this test fails on different machines
     try std.testing.expectApproxEqAbs(3071999436, @as(f64, @floatFromInt(cpu_elapsed)), 10000000);
 }

@@ -1,8 +1,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const profiler = @import("profiler");
-const metrics = profiler.metrics;
+const Profiler = @import("profiler");
+const metrics = Profiler.metrics;
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -23,6 +23,7 @@ pub fn main(init: std.process.Init) !void {
     const stdout_writer = &stdout_file_writer.interface;
 
     {
+        try stdout_writer.print("CPU Frequency Estimation:\n", .{});
         const os_freq = metrics.getOsTimerFreq();
         try stdout_writer.print("    OS Freq: {d} (reported)\n", .{os_freq});
 
