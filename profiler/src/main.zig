@@ -47,6 +47,10 @@ pub fn main(init: std.process.Init) !void {
 
         try stdout_writer.print("    CPU Timer: {d} -> {d} = {d} elapsed\n", .{ cpu_start, cpu_end, cpu_elapsed });
         try stdout_writer.print("  CPU Freq: {d} (guessed)\n", .{cpu_freq});
+
+        try stdout_writer.print("Now trying api function for same functionality... \n", .{});
+        const api_cpu_freq = metrics.readCpuTimerFreq();
+        try stdout_writer.print("  CPU Freq: {d} (guessed)\n", .{api_cpu_freq});
     }
 
     try stdout_writer.flush(); // Don't forget to flush!

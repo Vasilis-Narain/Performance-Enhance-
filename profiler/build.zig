@@ -4,21 +4,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c_imports.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const c_mod = c.createModule();
+    // Leaving this here for future reference on how to link C headers
+    //
+    //const c = b.addTranslateC(.{
+    //.root_source_file = b.path("src/c_imports.h"),
+    //.target = target,
+    //.optimize = optimize,
+    //.link_libc = true,
+    //});
+    //const c_mod = c.createModule();
 
     const mod = b.addModule("profiler", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "c", .module = c_mod },
-        },
     });
 
     const exe = b.addExecutable(.{
