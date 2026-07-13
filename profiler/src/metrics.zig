@@ -2,7 +2,8 @@
 //* Casey Muratore's Performance Aware course files.
 //* Please see https://computerenhance.com for licensing and more information.
 const std = @import("std");
-const native_os = @import("builtin").target.os.tag;
+const builtin = @import("builtin");
+const native_os = builtin.target.os.tag;
 const windows = std.os.windows;
 const linux = std.os.linux;
 
@@ -52,7 +53,10 @@ pub inline fn readCpuTimer() u64 {
 }
 
 pub fn readCpuTimerFreq() u64 {
-    const milliseconds_to_wait: u64 = 1000;
+    // 8 milliseconds seems to be the lowest amount to be within 1_000_000 of the number found
+    // with 1000 milliseconds wait time. However, I'll leave it at 100 since that's what Casey used
+    // Surely, there is a reason.
+    const milliseconds_to_wait: u64 = 100;
     const os_freq = getOsTimerFreq();
     const cpu_start = readCpuTimer();
     const os_start = readOsTimer();
@@ -72,7 +76,8 @@ pub fn readCpuTimerFreq() u64 {
 
 test "read cpu timer" {
     const cpu_freq = readCpuTimerFreq();
-    try std.testing.expectApproxEqAbs(3071999436, @as(f64, @floatFromInt(cpu_freq)), 10000000);
+    // For obvious reasons this test fails on different machines
+    try std.testing.expectApproxEqAbs(3_071_999_436, @as(f64, @floatFromInt(cpu_freq)), 1_000_000);
 }
 
 test "metrics os timers" {
@@ -86,7 +91,7 @@ test "metrics os timers" {
         os_end = readOsTimer();
         os_elapsed = os_end - os_start;
     }
-    try std.testing.expect(10000000 == os_elapsed);
+    try std.testing.expect(10_000_000 == os_elapsed);
 }
 
 test "metrics cpu timer" {
@@ -106,5 +111,5 @@ test "metrics cpu timer" {
     const cpu_elapsed = cpu_end - cpu_start;
 
     // For obvious reasons this test fails on different machines
-    try std.testing.expectApproxEqAbs(3071999436, @as(f64, @floatFromInt(cpu_elapsed)), 10000000);
+    try std.testing.expectApproxEqAbs(3_071_999_436, @as(f64, @floatFromInt(cpu_elapsed)), 1_000_000);
 }

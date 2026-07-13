@@ -15,6 +15,9 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("haversine", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "profiler", .module = profiler_mod },
+        },
     });
 
     const exe = b.addExecutable(.{

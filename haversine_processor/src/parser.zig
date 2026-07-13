@@ -1,7 +1,16 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const hs = @import("haversine.zig");
 const Io = std.Io;
+
+const hs = @import("haversine.zig");
+
+const Profiler = @import("profiler");
+const metrics = Profiler.metrics;
+
+pub const MetricsOutput = struct {
+    misc_setup_elapsed: u64 = 0,
+    parse_sum_elapsed: u64 = 0,
+};
 
 /// Parses input json for Haversine Distance Problem:
 ///
@@ -14,7 +23,8 @@ const Io = std.Io;
 ///     {...},
 ///     {...}
 /// ]}`
-pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points {
+pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader, metrics_output: *MetricsOutput) !Points {
+    const misc_setup_start = metrics.readCpuTimer();
     var flags: Flags = .{};
 
     var int_part_buffer: [3]u8 = undefined;
@@ -26,6 +36,10 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
     // 512 seems like a sensible starting array size for this problem
     var output_points: Points = try .init(allocator, 512);
 
+    const misc_setup_end = metrics.readCpuTimer();
+    metrics_output.misc_setup_elapsed = misc_setup_end - misc_setup_start;
+
+    const parse_sum_start = metrics.readCpuTimer();
     // Skip first line
     while (json_reader.takeByte()) |char| {
         if (char == '\n' or char == '\r') {
@@ -125,6 +139,8 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
         error.EndOfStream => {},
         else => return err,
     }
+    const parse_sum_end = metrics.readCpuTimer();
+    metrics_output.parse_sum_elapsed = parse_sum_end - parse_sum_start;
 
     return output_points;
 }

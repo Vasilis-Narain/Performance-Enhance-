@@ -1,3 +1,4 @@
+//* This file is just for testing purposes.
 const std = @import("std");
 const Io = std.Io;
 
@@ -10,10 +11,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Accessing command line arguments:
     const args = try init.minimal.args.toSlice(arena);
-    var milliseconds_to_wait: u64 = 1000;
-    if (args.len == 2) {
-        milliseconds_to_wait = try std.fmt.parseInt(u64, args[1], 10);
-    }
+    const milliseconds_to_wait: u64 = if (args.len == 2) try std.fmt.parseInt(u64, args[1], 10) else 1000;
 
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;

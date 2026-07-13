@@ -11,11 +11,11 @@ const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
 
 pub fn main(init: std.process.Init) !void {
+    const cpu_freq = metrics.readCpuTimerFreq();
+    const process_start = metrics.readCpuTimer();
+
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
-
-    const rdtsc = metrics.readCpuTimer();
-    std.debug.print("RDTSC: {d}\n", .{rdtsc});
 
     const args = try init.minimal.args.toSlice(arena);
     var opts: Opts = parseArgsCli(arena, args) catch return;
@@ -63,14 +63,25 @@ pub fn main(init: std.process.Init) !void {
             try byte_writer.flush();
         },
         .process => {
+            const startup_end = metrics.readCpuTimer();
+            const startup_elapsed = startup_end - process_start;
+
+            var metrics_out: Haversine.MetricsOutput = .{};
             // Not bothering with catching errors cause realistically if we can't open the files we should crash.
 
             // Init json file reader
             var json_file = try Io.Dir.cwd().openFile(io, opts.json_file_name, .{ .mode = .read_only });
             defer json_file.close(io);
-            var json_buffer: [4096]u8 = undefined;
-            var json_file_reader = json_file.reader(io, &json_buffer);
+            const json_size = (try json_file.stat(io)).size;
+            const json_buffer = try arena.alloc(u8, json_size);
+            defer arena.free(json_buffer);
+            var json_file_reader = json_file.reader(io, json_buffer);
             const json_reader = &json_file_reader.interface;
+
+            const read_start = metrics.readCpuTimer();
+            try json_reader.fill(json_size);
+            const read_end = metrics.readCpuTimer();
+            const read_elapsed = read_end - read_start;
 
             // Init byte file reader
             var byte_file = try Io.Dir.cwd().openFile(io, opts.byte_file_name, .{ .mode = .read_only });
@@ -85,20 +96,45 @@ pub fn main(init: std.process.Init) !void {
             const last8 = try byte_reader.take(8);
             const reference_sum: f64 = @bitCast(std.mem.readInt(u64, last8[0..8], .native)); // Handles endianness.
 
-            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
+            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader, &metrics_out);
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
+            const process_end = metrics.readCpuTimer();
+            const process_elapsed = process_end - process_start;
+
             try stdout_writer.print(
+                \\
+                \\Input size: {d}
                 \\Pair count: {d}
+                \\
+                \\Total time: {d:.4}ms (CPU freq: {d})
+                \\  Startup: {d} ({d:.2}%)
+                \\  Read json: {d} ({d:.2}%)
+                \\  Misc setup: {d} ({d:.2}%)
+                \\  Parse + Sum: {d} ({d:.2}%) //Sum calculated per row while parsing. Splitting profile introduces too much noise
+                \\
+                \\
                 \\Haversine sum average: {d}
                 \\
                 \\Validation:
                 \\Reference sum: {d}
                 \\Difference: {d}
                 \\
+                \\
             ,
                 .{
+                    json_size,
                     points.count,
+                    (@as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(cpu_freq))) * 1000,
+                    cpu_freq,
+                    startup_elapsed,
+                    percentageWorkDone(startup_elapsed, process_elapsed),
+                    read_elapsed,
+                    percentageWorkDone(read_elapsed, process_elapsed),
+                    metrics_out.misc_setup_elapsed,
+                    percentageWorkDone(metrics_out.misc_setup_elapsed, process_elapsed),
+                    metrics_out.parse_sum_elapsed,
+                    percentageWorkDone(metrics_out.parse_sum_elapsed, process_elapsed),
                     haversine_sum,
                     reference_sum,
                     haversine_sum - reference_sum,
@@ -109,6 +145,10 @@ pub fn main(init: std.process.Init) !void {
 
     // FLUSHING!
     try stdout_writer.flush();
+}
+
+fn percentageWorkDone(work_elapsed: u64, process_elapsed: u64) f64 {
+    return (@as(f64, @floatFromInt(work_elapsed)) / @as(f64, @floatFromInt(process_elapsed))) * 100;
 }
 
 const CallType = enum {
