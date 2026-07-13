@@ -33,8 +33,8 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader, metrics_
     // 0 = x0, 1 = y0, 2 = x1, 3 = y1
     var point_index: u8 = 0;
 
-    // 512 seems like a sensible starting array size for this problem
-    var output_points: Points = try .init(allocator, 512);
+    // 1024 seems like a sensible starting array size for this problem
+    var output_points: Points = try .init(allocator, 1024);
 
     const misc_setup_end = metrics.readCpuTimer();
     metrics_output.misc_setup_elapsed = misc_setup_end - misc_setup_start;
@@ -71,10 +71,10 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader, metrics_
 
                 const i = output_points.count;
                 output_points.sums[i] = hs.referenceHaversine(
-                    @floatCast(output_points.x0[i]),
-                    @floatCast(output_points.y0[i]),
-                    @floatCast(output_points.x1[i]),
-                    @floatCast(output_points.y1[i]),
+                    output_points.x0[i],
+                    output_points.y0[i],
+                    output_points.x1[i],
+                    output_points.y1[i],
                     hs.EARTH_RADIUS,
                 );
                 output_points.total += output_points.sums[i];
@@ -165,7 +165,7 @@ const Flags = struct {
 };
 
 /// Clinger Fast Path algorithm
-fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f80 {
+fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f64 {
     var significand: u64 = 0;
     for (int_digits) |ascii_digit| {
         significand = significand * 10 + (ascii_digit - '0');
@@ -181,7 +181,7 @@ fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f80 
 
     const result = if (is_negative) -magnitude else magnitude;
 
-    return result;
+    return @floatCast(result);
 }
 
 pub const Point = enum(u8) {
@@ -194,24 +194,24 @@ pub const Point = enum(u8) {
 /// Heap allocated SOA to hold output
 /// Note(vasilis): this is not needed for current hw but might be in the future
 pub const Points = struct {
-    x0: []f80,
-    y0: []f80,
-    x1: []f80,
-    y1: []f80,
+    x0: []f64,
+    y0: []f64,
+    x1: []f64,
+    y1: []f64,
     sums: []f64,
     total: f64,
-    allocator: std.mem.Allocator,
     curr_buffer_size: u64,
     count: u32,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, size: u32) !@This() {
-        const x0 = try allocator.alloc(f80, size);
+        const x0 = try allocator.alloc(f64, size);
         errdefer allocator.free(x0);
-        const y0 = try allocator.alloc(f80, size);
+        const y0 = try allocator.alloc(f64, size);
         errdefer allocator.free(y0);
-        const x1 = try allocator.alloc(f80, size);
+        const x1 = try allocator.alloc(f64, size);
         errdefer allocator.free(x1);
-        const y1 = try allocator.alloc(f80, size);
+        const y1 = try allocator.alloc(f64, size);
         errdefer allocator.free(y1);
         const sums = try allocator.alloc(f64, size);
         errdefer allocator.free(sums);
@@ -228,7 +228,7 @@ pub const Points = struct {
         };
     }
 
-    pub fn insertPoint(self: *@This(), point: Point, value: f80, index: usize) void {
+    pub fn insertPoint(self: *@This(), point: Point, value: f64, index: usize) void {
         switch (point) {
             .x0 => self.x0[index] = value,
             .y0 => self.y0[index] = value,
