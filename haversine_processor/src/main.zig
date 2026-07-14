@@ -9,13 +9,16 @@ const Io = std.Io;
 const Haversine = @import("haversine");
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
+const profiler = Profiler.profiler;
 
 pub fn main(init: std.process.Init) !void {
-    const cpu_freq = metrics.readCpuTimerFreq();
-    const process_start = metrics.readCpuTimer();
 
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
+
+    // Initialise global (mutable) instance
+    const pf = Profiler.profiler_instance;
+    pf.init(arena);
 
     const args = try init.minimal.args.toSlice(arena);
     var opts: Opts = parseArgsCli(arena, args) catch return;
@@ -63,10 +66,8 @@ pub fn main(init: std.process.Init) !void {
             try byte_writer.flush();
         },
         .process => {
-            const startup_end = metrics.readCpuTimer();
-            const startup_elapsed = startup_end - process_start;
-
-            var metrics_out: Haversine.MetricsOutput = .{};
+            const untracked_misc: *profiler.trace = try .init(pf, "untracked_misc", @src());
+            defer untracked_misc.deinit();
             // Not bothering with catching errors cause realistically if we can't open the files we should crash.
 
             // Init json file reader
@@ -78,10 +79,9 @@ pub fn main(init: std.process.Init) !void {
             var json_file_reader = json_file.reader(io, json_buffer);
             const json_reader = &json_file_reader.interface;
 
-            const read_start = metrics.readCpuTimer();
+            const json_read_trace: *profiler.trace = try .init(pf, "json_read_trace", @src());
             try json_reader.fill(json_size);
-            const read_end = metrics.readCpuTimer();
-            const read_elapsed = read_end - read_start;
+            json_read_trace.deinit();
 
             // Init byte file reader
             var byte_file = try Io.Dir.cwd().openFile(io, opts.byte_file_name, .{ .mode = .read_only });
@@ -96,23 +96,13 @@ pub fn main(init: std.process.Init) !void {
             const last8 = try byte_reader.take(8);
             const reference_sum: f64 = @bitCast(std.mem.readInt(u64, last8[0..8], .native)); // Handles endianness.
 
-            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader, &metrics_out);
+            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
-
-            const process_end = metrics.readCpuTimer();
-            const process_elapsed = process_end - process_start;
 
             try stdout_writer.print(
                 \\
                 \\Input size: {d}
                 \\Pair count: {d}
-                \\
-                \\Total time: {d:.4}ms (CPU freq: {d})
-                \\  Startup: {d} ({d:.2}%)
-                \\  Read json: {d} ({d:.2}%)
-                \\  Misc setup: {d} ({d:.2}%)
-                \\  Parse + Sum: {d} ({d:.2}%) //Sum calculated per row while parsing. Splitting profile introduces too much noise
-                \\
                 \\
                 \\Haversine sum average: {d}
                 \\
@@ -125,16 +115,6 @@ pub fn main(init: std.process.Init) !void {
                 .{
                     json_size,
                     points.count,
-                    (@as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(cpu_freq))) * 1000,
-                    cpu_freq,
-                    startup_elapsed,
-                    percentageWorkDone(startup_elapsed, process_elapsed),
-                    read_elapsed,
-                    percentageWorkDone(read_elapsed, process_elapsed),
-                    metrics_out.misc_setup_elapsed,
-                    percentageWorkDone(metrics_out.misc_setup_elapsed, process_elapsed),
-                    metrics_out.parse_sum_elapsed,
-                    percentageWorkDone(metrics_out.parse_sum_elapsed, process_elapsed),
                     haversine_sum,
                     reference_sum,
                     haversine_sum - reference_sum,
@@ -144,6 +124,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // FLUSHING!
+    try pf.deinit(stdout_writer);
     try stdout_writer.flush();
 }
 

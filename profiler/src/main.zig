@@ -9,7 +9,7 @@ const profiler = Profiler.profiler;
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
-    const pf = &Profiler.profiler_instance;
+    var pf = Profiler.profiler_instance;
     pf.init(arena);
 
     // Accessing command line arguments:

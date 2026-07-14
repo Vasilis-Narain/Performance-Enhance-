@@ -5,7 +5,7 @@
 //!    const profiler = Profiler.profiler;
 //!
 //!    // Somewhere at the top of the program's entry point (main)
-//!    const pf = &Profiler.profiler_instance;
+//!    const pf = Profiler.profiler_instance;
 //!    pf.init(std.mem.Allocator); // make sure the Allocator passed in's intended life time matches the one intended for the profiler
 //!                                // this same allocator will also be used by all the traces.
 //!
@@ -40,7 +40,8 @@ pub const profiler = @import("profiler.zig");
 //to be able to call .init once in main, and then by simply importing
 //this file (or the library) to wherever is needed then they can
 //have access to the same global Profiler instance
-pub var profiler_instance: profiler.Profiler = undefined;
+var global_profiler_instance: profiler.Profiler = undefined;
+pub const profiler_instance = &global_profiler_instance;
 
 test {
     _ = metrics;

@@ -6,11 +6,7 @@ const hs = @import("haversine.zig");
 
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
-
-pub const MetricsOutput = struct {
-    misc_setup_elapsed: u64 = 0,
-    parse_sum_elapsed: u64 = 0,
-};
+const profiler = Profiler.profiler;
 
 /// Parses input json for Haversine Distance Problem:
 ///
@@ -23,8 +19,9 @@ pub const MetricsOutput = struct {
 ///     {...},
 ///     {...}
 /// ]}`
-pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader, metrics_output: *MetricsOutput) !Points {
-    const misc_setup_start = metrics.readCpuTimer();
+pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points {
+    const pf = Profiler.profiler_instance;
+    const misc_setup_trace: *profiler.trace = try .init(pf, "misc_setup_trace", @src());
     var flags: Flags = .{};
 
     var int_part_buffer: [3]u8 = undefined;
@@ -35,112 +32,112 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader, metrics_
 
     // 1024 seems like a sensible starting array size for this problem
     var output_points: Points = try .init(allocator, 1024);
+    misc_setup_trace.deinit();
 
-    const misc_setup_end = metrics.readCpuTimer();
-    metrics_output.misc_setup_elapsed = misc_setup_end - misc_setup_start;
+    {
+        const parse_json_trace: *profiler.trace = try .init(pf, "parse_and_sum_json_trace", @src());
+        defer parse_json_trace.deinit();
 
-    const parse_sum_start = metrics.readCpuTimer();
-    // Skip first line
-    while (json_reader.takeByte()) |char| {
-        if (char == '\n' or char == '\r') {
-            flags.last_iter_was_new_line = true;
-            break;
-        }
-    } else |err| switch (err) {
-        error.EndOfStream => return error.NoPointLines,
-        else => return err,
-    }
-
-    while (json_reader.takeByte()) |char| {
-
-        // Skip newline chars
-        if (char == '\n' or char == '\r') {
-            if (!flags.last_iter_was_new_line) {
+        // Skip first line
+        while (json_reader.takeByte()) |char| {
+            if (char == '\n' or char == '\r') {
                 flags.last_iter_was_new_line = true;
+                break;
+            }
+        } else |err| switch (err) {
+            error.EndOfStream => return error.NoPointLines,
+            else => return err,
+        }
 
-                if (!flags.committed) {
-                    const curr_point: Point = @enumFromInt(3);
+        while (json_reader.takeByte()) |char| {
+
+            // Skip newline chars
+            if (char == '\n' or char == '\r') {
+                if (!flags.last_iter_was_new_line) {
+                    flags.last_iter_was_new_line = true;
+
+                    if (!flags.committed) {
+                        const curr_point: Point = @enumFromInt(3);
+                        const curr_num = buildFloat(int_part_buffer[0..flags.int_part_index], decimal_part_buffer[0..flags.decimal_part_index], flags.curr_num_negative);
+                        output_points.insertPoint(curr_point, curr_num, output_points.count);
+                    } else {
+                        flags.committed = false;
+                    }
+
+                    flags.flushNumberFlags();
+                    point_index = 0;
+
+                    const i = output_points.count;
+                    output_points.sums[i] = hs.referenceHaversine(
+                        output_points.x0[i],
+                        output_points.y0[i],
+                        output_points.x1[i],
+                        output_points.y1[i],
+                        hs.EARTH_RADIUS,
+                    );
+                    output_points.total += output_points.sums[i];
+                    output_points.count += 1;
+                    continue;
+                } else {
+                    flags.last_iter_was_new_line = false;
+                    continue;
+                }
+            }
+            flags.last_iter_was_new_line = false;
+            if (char == ' ') continue;
+            if (char == '-') {
+                flags.curr_num_negative = true;
+                continue;
+            }
+
+            // ArrayList like resizing heuristic
+            if (output_points.count >= output_points.curr_buffer_size) {
+                try output_points.realloc(output_points.curr_buffer_size * 2);
+            }
+
+            if (!flags.parsing_string and (char >= '0' and char <= '9')) {
+                if (flags.parsing_int_part) {
+                    int_part_buffer[flags.int_part_index] = char;
+                    flags.int_part_index += 1;
+                }
+                if (flags.parsing_decimal_part) {
+                    decimal_part_buffer[flags.decimal_part_index] = char;
+                    flags.decimal_part_index += 1;
+                }
+            }
+
+            const char_enum: SpecialChar = @enumFromInt(char);
+            switch (char_enum) {
+                .semicolon => {
+                    flags.parsing_int_part = true;
+                    flags.committed = false;
+                    continue;
+                },
+                .comma => {
+                    const curr_point: Point = @enumFromInt(point_index);
+                    point_index += 1;
+
                     const curr_num = buildFloat(int_part_buffer[0..flags.int_part_index], decimal_part_buffer[0..flags.decimal_part_index], flags.curr_num_negative);
                     output_points.insertPoint(curr_point, curr_num, output_points.count);
-                } else {
-                    flags.committed = false;
-                }
+                    flags.committed = true;
+                    flags.flushNumberFlags();
 
-                flags.flushNumberFlags();
-                point_index = 0;
-
-                const i = output_points.count;
-                output_points.sums[i] = hs.referenceHaversine(
-                    output_points.x0[i],
-                    output_points.y0[i],
-                    output_points.x1[i],
-                    output_points.y1[i],
-                    hs.EARTH_RADIUS,
-                );
-                output_points.total += output_points.sums[i];
-                output_points.count += 1;
-                continue;
-            } else {
-                flags.last_iter_was_new_line = false;
-                continue;
+                    continue;
+                },
+                .close_square => break,
+                .period => {
+                    flags.parsing_int_part = false;
+                    flags.parsing_decimal_part = true;
+                    continue;
+                },
+                .quotes => flags.parsing_string = !flags.parsing_string,
+                else => continue,
             }
+        } else |err| switch (err) {
+            error.EndOfStream => {},
+            else => return err,
         }
-        flags.last_iter_was_new_line = false;
-        if (char == ' ') continue;
-        if (char == '-') {
-            flags.curr_num_negative = true;
-            continue;
-        }
-
-        // ArrayList like resizing heuristic
-        if (output_points.count >= output_points.curr_buffer_size) {
-            try output_points.realloc(output_points.curr_buffer_size * 2);
-        }
-
-        if (!flags.parsing_string and (char >= '0' and char <= '9')) {
-            if (flags.parsing_int_part) {
-                int_part_buffer[flags.int_part_index] = char;
-                flags.int_part_index += 1;
-            }
-            if (flags.parsing_decimal_part) {
-                decimal_part_buffer[flags.decimal_part_index] = char;
-                flags.decimal_part_index += 1;
-            }
-        }
-
-        const char_enum: SpecialChar = @enumFromInt(char);
-        switch (char_enum) {
-            .semicolon => {
-                flags.parsing_int_part = true;
-                flags.committed = false;
-                continue;
-            },
-            .comma => {
-                const curr_point: Point = @enumFromInt(point_index);
-                point_index += 1;
-
-                const curr_num = buildFloat(int_part_buffer[0..flags.int_part_index], decimal_part_buffer[0..flags.decimal_part_index], flags.curr_num_negative);
-                output_points.insertPoint(curr_point, curr_num, output_points.count);
-                flags.committed = true;
-                flags.flushNumberFlags();
-
-                continue;
-            },
-            .close_square => break,
-            .period => {
-                flags.parsing_int_part = false;
-                flags.parsing_decimal_part = true;
-                continue;
-            },
-            .quotes => flags.parsing_string = !flags.parsing_string,
-            else => continue,
-        }
-    } else |err| switch (err) {
-        error.EndOfStream => {},
-        else => return err,
     }
-    const parse_sum_end = metrics.readCpuTimer();
-    metrics_output.parse_sum_elapsed = parse_sum_end - parse_sum_start;
 
     return output_points;
 }
@@ -192,7 +189,8 @@ pub const Point = enum(u8) {
 };
 
 /// Heap allocated SOA to hold output
-/// Note(vasilis): this is not needed for current hw but might be in the future
+/// Note(vasilis): Actually storing the intermediate results is not needed
+/// but we can imagine why it would be in other contexts
 pub const Points = struct {
     x0: []f64,
     y0: []f64,

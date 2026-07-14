@@ -9,7 +9,7 @@ const ANSI_YELLOW = "\x1b[33m";
 
 pub const Profiler = struct {
     trace_stack: [32]*trace,
-    trace_stack_count: u8,
+    current: ?*trace,
     trace_count: u8,
     allocator: std.mem.Allocator,
     start_tick: u64,
@@ -18,9 +18,9 @@ pub const Profiler = struct {
         self.* = .{
             .allocator = allocator,
             .trace_stack = undefined,
-            .trace_stack_count = 0,
             .trace_count = 0,
             .start_tick = metrics.readCpuTimer(),
+            .current = null,
         };
     }
 
@@ -50,7 +50,7 @@ pub const Profiler = struct {
         }
         try writer.print(" |\n |  Total elapsed: {d} / {d:.4}ms\n\n", .{
             process_elapsed,
-            @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(metrics.readCpuTimerFreq())),
+            @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(metrics.readCpuTimerFreq())) * 1000,
         });
     }
 };
@@ -63,14 +63,13 @@ pub const trace = struct {
     name: []const u8,
     src: std.builtin.SourceLocation,
     profiler: *Profiler,
-    idx: u8,
+    parent: ?*@This(),
 
     pub fn init(pf: *Profiler, name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
         const self = try pf.allocator.create(@This());
         errdefer pf.allocator.destroy(self);
 
         self.* = .{
-            .idx = pf.trace_stack_count + 1,
             .start_tick = metrics.readCpuTimer(),
             .end_tick = undefined,
             .elapsed_tick = 0,
@@ -78,10 +77,11 @@ pub const trace = struct {
             .name = try pf.allocator.dupe(u8, name),
             .src = src,
             .profiler = pf,
+            .parent = pf.current,
         };
         pf.trace_stack[pf.trace_count] = self;
         pf.trace_count += 1;
-        pf.trace_stack_count += 1;
+        pf.current = self;
 
         return self;
     }
@@ -90,11 +90,11 @@ pub const trace = struct {
         self.end_tick = metrics.readCpuTimer();
         // Note(vasilis): this feels like it should be strictly positive so I am gonna assume it is
         self.elapsed_tick = (self.end_tick - self.start_tick) - self.elapsed_tick_from_child;
-        self.profiler.trace_stack_count -= 1;
 
-        if (self.idx > 0) {
-            self.profiler.trace_stack[self.idx - 1].elapsed_tick_from_child += self.elapsed_tick;
+        if (self.parent) |parent| {
+            parent.elapsed_tick_from_child += self.elapsed_tick;
         }
+        self.profiler.current = self.parent;
     }
 };
 
