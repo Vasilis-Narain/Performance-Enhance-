@@ -5,8 +5,7 @@ const Io = std.Io;
 const hs = @import("haversine.zig");
 
 const Profiler = @import("profiler");
-const metrics = Profiler.metrics;
-const profiler = Profiler.profiler;
+const Trace = Profiler.Trace;
 
 /// Parses input json for Haversine Distance Problem:
 ///
@@ -20,8 +19,8 @@ const profiler = Profiler.profiler;
 ///     {...}
 /// ]}`
 pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points {
-    const pf = Profiler.profiler_instance;
-    const misc_setup_trace: *profiler.trace = try .init(pf, "misc_setup_trace", @src());
+    const pf = Profiler.profiler_instance_ptr;
+    const misc_setup_trace: *Trace = try .init(pf, "misc_setup_trace", @src());
     var flags: Flags = .{};
 
     var int_part_buffer: [3]u8 = undefined;
@@ -35,7 +34,7 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
     misc_setup_trace.deinit();
 
     {
-        const parse_json_trace: *profiler.trace = try .init(pf, "parse_and_sum_json_trace", @src());
+        const parse_json_trace: *Trace = try .init(pf, "parse_and_sum_json_trace", @src());
         defer parse_json_trace.deinit();
 
         // Skip first line

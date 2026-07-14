@@ -1,23 +1,22 @@
 //! Usage:
-//! `
+//! ```
 //!    const Profiler = @import("profiler");
-//!    const metrics = Profiler.metrics;
-//!    const profiler = Profiler.profiler;
+//!    const Trace = Profiler.Trace;
 //!
 //!    // Somewhere at the top of the program's entry point (main)
-//!    const pf = Profiler.profiler_instance;
+//!    const pf = Profiler.profiler_stack_ptr;
 //!    pf.init(std.mem.Allocator); // make sure the Allocator passed in's intended life time matches the one intended for the profiler
 //!                                // this same allocator will also be used by all the traces.
 //!
-//!    var main_loop_trace: *profiler.trace = undefined; // initialize as undefined at the top
 //!
 //!    // For traces
 //!    {
-//!        main_loop_trace = try .init(pf, "main_loop", @src());
+//!        // Initialise trace and deinit with defer when out of scope.
+//!        const main_loop_trace: *Trace = try .init(pf, "main_loop", @src());
 //!        defer main_loop_trace.deinit();
 //!
 //!        //inner loop
-//!        const inner_loop_trace: *profiler.trace = .init(pf, "inner_loop", @src()); // handy one liner
+//!        const inner_loop_trace: *Trace = try .init(pf, "inner_loop", @src());
 //!        while (true) {
 //!            // Doing the thing
 //!        }
@@ -26,22 +25,24 @@
 //!                                   // from the rest of the program. In those cases just do this.
 //!    }
 //!
-//!    try pf.deinit(*std.Io.Writer); //at the end of the process, prints all traces with chosen Writer
-//! `
+//!    try pf.deinit(*std.Io.Writer); //at the end of the process, prints all traces to the chosen Writer
+//! ```
 //!
-//! Initializing the Profiler.profiler_instance once in main allows for traces to be initialized and ran from
-//! multiple files as long as this library is imported to that file without
-//! needing to change function signatures. Doubt this is particularly thread safe..
+//! Initializing the Profiler.profiler_instance once in main allows for traces to be initialized in, and ran from,
+//! multiple files as long as this library is imported to that file. Without needing to change function signatures.
 //!
+const profiler = @import("profiler.zig");
+pub const Trace = profiler.Trace;
+
+/// Set of wrapper functions for performance counters and frequencies
 pub const metrics = @import("metrics.zig");
-pub const profiler = @import("profiler.zig");
 
 //Note(vasilis): Not sure if this is the proper way to do this.. I want the user
 //to be able to call .init once in main, and then by simply importing
 //this file (or the library) to wherever is needed then they can
 //have access to the same global Profiler instance
-var global_profiler_instance: profiler.Profiler = undefined;
-pub const profiler_instance = &global_profiler_instance;
+var internal_profiler_instance: profiler.ProfilerInstance = undefined;
+pub const profiler_instance_ptr = &internal_profiler_instance;
 
 test {
     _ = metrics;

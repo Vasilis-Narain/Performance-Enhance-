@@ -4,12 +4,12 @@ const Io = std.Io;
 
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
-const profiler = Profiler.profiler;
+const Trace = Profiler.Trace;
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
-    var pf = Profiler.profiler_instance;
+    var pf = Profiler.profiler_instance_ptr;
     pf.init(arena);
 
     // Accessing command line arguments:
@@ -19,14 +19,14 @@ pub fn main(init: std.process.Init) !void {
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
 
-    const stdout_setup_trace: *profiler.trace = try .init(pf, "stdout_setup_trace", @src());
+    const stdout_setup_trace: *Trace = try .init(pf, "stdout_setup_trace", @src());
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
     stdout_setup_trace.deinit();
 
     {
-        const main_loop_trace: *profiler.trace = try .init(pf, "main_loop_trace", @src());
+        const main_loop_trace: *Trace = try .init(pf, "main_loop_trace", @src());
         defer main_loop_trace.deinit();
         try stdout_writer.print("CPU Frequency Estimation:\n", .{});
         const os_freq = metrics.getOsTimerFreq();
@@ -39,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
         const os_wait_time = os_freq * milliseconds_to_wait / 1000;
 
         {
-            const inner_loop_trace: *profiler.trace = try .init(pf, "inner_loop_trace", @src());
+            const inner_loop_trace: *Trace = try .init(pf, "inner_loop_trace", @src());
             defer inner_loop_trace.deinit();
             while (os_elapsed < os_wait_time) {
                 os_end = metrics.readOsTimer();
@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
         const cpu_freq = if (os_elapsed > 0) os_freq * cpu_elapsed / os_elapsed else 0;
 
         {
-            const print_trace: *profiler.trace = try .init(pf, "print_trace", @src());
+            const print_trace: *Trace = try .init(pf, "print_trace", @src());
             defer print_trace.deinit();
 
             try stdout_writer.print("    OS Timer: {d} -> {d} = {d} elapsed\n", .{ os_start, os_end, os_elapsed });

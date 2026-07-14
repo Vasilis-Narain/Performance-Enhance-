@@ -8,8 +8,7 @@ const Io = std.Io;
 
 const Haversine = @import("haversine");
 const Profiler = @import("profiler");
-const metrics = Profiler.metrics;
-const profiler = Profiler.profiler;
+const Trace = Profiler.Trace;
 
 pub fn main(init: std.process.Init) !void {
 
@@ -17,7 +16,7 @@ pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
 
     // Initialise global (mutable) instance
-    const pf = Profiler.profiler_instance;
+    const pf = Profiler.profiler_instance_ptr;
     pf.init(arena);
 
     const args = try init.minimal.args.toSlice(arena);
@@ -66,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
             try byte_writer.flush();
         },
         .process => {
-            const untracked_misc: *profiler.trace = try .init(pf, "untracked_misc", @src());
+            const untracked_misc: *Trace = try .init(pf, "untracked_misc", @src());
             defer untracked_misc.deinit();
             // Not bothering with catching errors cause realistically if we can't open the files we should crash.
 
@@ -79,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
             var json_file_reader = json_file.reader(io, json_buffer);
             const json_reader = &json_file_reader.interface;
 
-            const json_read_trace: *profiler.trace = try .init(pf, "json_read_trace", @src());
+            const json_read_trace: *Trace = try .init(pf, "json_read_trace", @src());
             try json_reader.fill(json_size);
             json_read_trace.deinit();
 

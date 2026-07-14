@@ -7,9 +7,9 @@ const ANSI_RED = "\x1b[31m";
 const ANSI_GREEN = "\x1b[32m";
 const ANSI_YELLOW = "\x1b[33m";
 
-pub const Profiler = struct {
-    trace_stack: [32]*trace,
-    current: ?*trace,
+pub const ProfilerInstance = struct {
+    trace_stack: [32]*Trace,
+    current: ?*Trace,
     trace_count: u8,
     allocator: std.mem.Allocator,
     start_tick: u64,
@@ -55,17 +55,17 @@ pub const Profiler = struct {
     }
 };
 
-pub const trace = struct {
+pub const Trace = struct {
     start_tick: u64,
     end_tick: u64,
     elapsed_tick: u64,
     elapsed_tick_from_child: u64,
     name: []const u8,
     src: std.builtin.SourceLocation,
-    profiler: *Profiler,
+    profiler: *ProfilerInstance,
     parent: ?*@This(),
 
-    pub fn init(pf: *Profiler, name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
+    pub fn init(pf: *ProfilerInstance, name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
         const self = try pf.allocator.create(@This());
         errdefer pf.allocator.destroy(self);
 
