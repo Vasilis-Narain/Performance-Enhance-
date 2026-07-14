@@ -19,6 +19,9 @@ pub fn main(init: std.process.Init) !void {
     const pf = Profiler.profiler_instance_ptr;
     pf.init(arena);
 
+    var printing_trace: *Trace = undefined;
+    const initial_setup_trace: *Trace = try .init(pf, "initial setup", @src());
+
     const args = try init.minimal.args.toSlice(arena);
     var opts: Opts = parseArgsCli(arena, args) catch return;
 
@@ -30,6 +33,8 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
+
+    initial_setup_trace.deinit();
 
     switch (opts.call_type) {
         .generate => {
@@ -65,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
             try byte_writer.flush();
         },
         .process => {
-            const untracked_misc: *Trace = try .init(pf, "untracked_misc", @src());
+            const untracked_misc: *Trace = try .init(pf, "untracked misc", @src());
             defer untracked_misc.deinit();
             // Not bothering with catching errors cause realistically if we can't open the files we should crash.
 
@@ -78,7 +83,7 @@ pub fn main(init: std.process.Init) !void {
             var json_file_reader = json_file.reader(io, json_buffer);
             const json_reader = &json_file_reader.interface;
 
-            const json_read_trace: *Trace = try .init(pf, "json_read_trace", @src());
+            const json_read_trace: *Trace = try .init(pf, "json read", @src());
             try json_reader.fill(json_size);
             json_read_trace.deinit();
 
@@ -98,6 +103,7 @@ pub fn main(init: std.process.Init) !void {
             const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
+            printing_trace = try .init(pf, "printing", @src());
             try stdout_writer.print(
                 \\
                 \\Input size: {d}
@@ -123,6 +129,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // FLUSHING!
+    printing_trace.deinit();
+    try stdout_writer.flush();
     try pf.deinit(stdout_writer);
     try stdout_writer.flush();
 }

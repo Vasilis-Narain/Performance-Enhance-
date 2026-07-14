@@ -20,7 +20,7 @@ const Trace = Profiler.Trace;
 /// ]}`
 pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points {
     const pf = Profiler.profiler_instance_ptr;
-    const misc_setup_trace: *Trace = try .init(pf, "misc_setup_trace", @src());
+    const misc_setup_trace: *Trace = try .init(pf, "misc setup", @src());
     var flags: Flags = .{};
 
     var int_part_buffer: [3]u8 = undefined;
@@ -34,7 +34,7 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
     misc_setup_trace.deinit();
 
     {
-        const parse_json_trace: *Trace = try .init(pf, "parse_and_sum_json_trace", @src());
+        const parse_json_trace: *Trace = try .init(pf, "parse json and sum", @src());
         defer parse_json_trace.deinit();
 
         // Skip first line
