@@ -10,9 +10,9 @@ const ANSI_YELLOW = "\x1b[33m";
 pub const ProfilerInstance = struct {
     trace_stack: [32]*Trace,
     current: ?*Trace,
+    start_tick: u64,
     trace_count: u8,
     allocator: std.mem.Allocator,
-    start_tick: u64,
 
     pub fn init(self: *@This(), allocator: std.mem.Allocator) void {
         self.* = .{
@@ -36,7 +36,8 @@ pub const ProfilerInstance = struct {
         , .{});
         var i: u8 = 0;
         while (i < self.trace_count) : (i += 1) {
-            try writer.print(" |  {s}[{d}:{d}]: {s}{s}{s} => elapsed: {d} ({d:.2}%)\n", .{
+            try writer.print(" |  {s}::{s}[{d}:{d}]: {s}{s}{s} => elapsed: {d} ({d:.2}%)\n", .{
+                self.trace_stack[i].src.file,
                 self.trace_stack[i].src.fn_name,
                 self.trace_stack[i].src.line,
                 self.trace_stack[i].src.column,
