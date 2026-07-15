@@ -26,11 +26,11 @@ pub fn main(init: std.process.Init) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
-    stdout_setup_trace.deinit();
+    stdout_setup_trace.stop();
 
     {
         const main_loop_trace: *Trace = try .init(pf, "main_loop_trace", @src());
-        defer main_loop_trace.deinit();
+        defer main_loop_trace.stop();
         try stdout_writer.print("CPU Frequency Estimation:\n", .{});
         const os_freq = metrics.getOsTimerFreq();
         try stdout_writer.print("    OS Freq: {d} (reported)\n", .{os_freq});
@@ -43,10 +43,24 @@ pub fn main(init: std.process.Init) !void {
 
         {
             const inner_loop_trace: *Trace = try .init(pf, "inner_loop_trace", @src());
-            defer inner_loop_trace.deinit();
+            defer inner_loop_trace.stop();
             while (os_elapsed < os_wait_time) {
                 os_end = metrics.readOsTimer();
                 os_elapsed = os_end - os_start;
+            }
+        }
+        {
+            const fn_trace_tester: *Trace = try .init(pf, "fn_trace_tester", @src());
+            defer fn_trace_tester.stop();
+
+            var a: u32 = 50;
+            var b: u32 = 80;
+
+            // Some random ops
+            for (0..1_000_000) |i| {
+                const c = testFnTrace(a, b);
+                a +%= b -% @as(u32, @intCast(i));
+                b +%= c;
             }
         }
 
@@ -56,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
 
         {
             const print_trace: *Trace = try .init(pf, "print_trace", @src());
-            defer print_trace.deinit();
+            defer print_trace.stop();
 
             try stdout_writer.print("    OS Timer: {d} -> {d} = {d} elapsed\n", .{ os_start, os_end, os_elapsed });
             try stdout_writer.print("  OS Seconds: {d:.4}\n", .{@as(f64, @floatFromInt(os_elapsed)) / @as(f64, @floatFromInt(os_freq))});
@@ -72,4 +86,18 @@ pub fn main(init: std.process.Init) !void {
 
     try pf.print(stdout_writer);
     try stdout_writer.flush(); // Don't forget to flush!
+}
+
+// Using volatile to make sure this thing actually runs. For testing
+fn testFnTrace(a: u32, b: u32) u32 {
+    const fn_tester: *Trace = .initFnTrace(Profiler.profiler_instance_ptr, @src());
+    defer fn_tester.updateFnTrace();
+    var ret: u32 = undefined;
+    asm volatile (
+        \\ addl %eax, %edx
+        : [ret] "={edx}" (ret),
+        : [a] "{eax}" (a),
+          [b] "{edx}" (b),
+    );
+    return ret;
 }

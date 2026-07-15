@@ -15,16 +15,16 @@
 //!
 //!    // For traces
 //!    {
-//!        // Initialise trace and deinit with defer when out of scope.
+//!        // Initialise trace and stop with defer when out of scope.
 //!        const main_loop_trace: *Trace = try .init(pf, "main_loop", @src());
-//!        defer main_loop_trace.deinit();
+//!        defer main_loop_trace.stop();
 //!
 //!        //inner loop
 //!        const inner_loop_trace: *Trace = try .init(pf, "inner_loop", @src());
 //!        while (true) {
 //!            // Doing the thing
 //!        }
-//!        inner_loop_trace.deinit(); // could've also used a block with defer like with main_loop_trace
+//!        inner_loop_trace.stop(); // could've also used a block with defer like with main_loop_trace
 //!                                   // but sometimes the thing we want to measure can't be blocked off
 //!                                   // from the rest of the program. In those cases just do this.
 //!    }
