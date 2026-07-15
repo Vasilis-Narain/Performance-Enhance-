@@ -8,6 +8,10 @@
 //!    pf.init(std.mem.Allocator); // make sure the Allocator passed in's intended life time matches the one intended for the profiler
 //!                                // this same allocator will also be used by all the traces.
 //!
+//!    // .deinit() only required if initialized with an Allocator that is not an Arena
+//!    // and if the profiler isn't meant to run for the program's lifetime.
+//!    defer pf.deinit();
+//!
 //!
 //!    // For traces
 //!    {
@@ -25,7 +29,7 @@
 //!                                   // from the rest of the program. In those cases just do this.
 //!    }
 //!
-//!    try pf.deinit(*std.Io.Writer); //at the end of the process, prints all traces to the chosen Writer
+//!    try pf.print(*std.Io.Writer); //prints all traces to the chosen Writer
 //! ```
 //!
 //! Initializing the Profiler.profiler_instance once in main allows for traces to be initialized in, and ran from,

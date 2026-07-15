@@ -8,7 +8,7 @@ const ANSI_GREEN = "\x1b[32m";
 const ANSI_YELLOW = "\x1b[33m";
 
 pub const ProfilerInstance = struct {
-    trace_stack: [32]*Trace,
+    trace_stack: [64]*Trace,
     current: ?*Trace,
     start_tick: u64,
     trace_count: u8,
@@ -24,7 +24,15 @@ pub const ProfilerInstance = struct {
         };
     }
 
-    pub fn deinit(self: *@This(), writer: *std.Io.Writer) !void {
+    pub fn deinit(self: *@This()) void {
+        var i: u8 = 0;
+        while (i < self.trace_count) : (i += 1) {
+            self.allocator.free(self.trace_stack[i].name);
+            self.allocator.destroy(self.trace_stack[i]);
+        }
+    }
+
+    pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
         const process_elapsed = metrics.readCpuTimer() - self.start_tick;
         try writer.print(
             \\
@@ -47,7 +55,6 @@ pub const ProfilerInstance = struct {
                 self.trace_stack[i].elapsed_tick,
                 percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
             });
-            self.allocator.free(self.trace_stack[i].name);
         }
         try writer.print(" |\n |  Total elapsed: {d} / {d:.4}ms\n\n", .{
             process_elapsed,

@@ -9,8 +9,11 @@ const Trace = Profiler.Trace;
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
+
+    // .deinit isn't actually needed here since it runs for full program time
     var pf = Profiler.profiler_instance_ptr;
     pf.init(arena);
+    defer pf.deinit();
 
     // Accessing command line arguments:
     const args = try init.minimal.args.toSlice(arena);
@@ -67,6 +70,6 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    try pf.deinit(stdout_writer);
+    try pf.print(stdout_writer);
     try stdout_writer.flush(); // Don't forget to flush!
 }

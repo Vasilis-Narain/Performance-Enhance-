@@ -40,16 +40,28 @@ pub fn readOsTimer() u64 {
 
 /// Simple rdtsc asm call (should be equivalent to rdtsc() in intrinsic.h)
 pub inline fn readCpuTimer() u64 {
-    var hi: u32 = 0;
-    var low: u32 = 0;
-
-    asm volatile (
-        \\rdtsc
-        : [low] "={eax}" (low),
-          [hi] "={edx}" (hi),
-    );
-
-    return (@as(u64, hi) << 32) | @as(u64, low);
+    switch (builtin.cpu.arch) {
+        .x86_64 => {
+            var ret: u64 = undefined;
+            asm volatile (
+                \\rdtsc
+                \\shlq $32, %rdx
+                \\orq  %rdx, %rax
+                : [ret] "={rax}" (ret)
+                :
+                : .{ .rdx = true });
+            return ret;
+        },
+        .aarch64 => {
+            var ret: u64 = undefined;
+            asm volatile (
+                \\mrs %[ret], cntvct_el0
+                : [ret] "=r" (ret),
+            );
+            return ret;
+        },
+        else => @compileError("Unsupported CPU architecture for cycle counting"),
+    }
 }
 
 pub fn readCpuTimerFreq() u64 {
