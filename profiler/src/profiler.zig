@@ -73,7 +73,8 @@ pub const Trace = struct {
     profiler: *ProfilerInstance,
     parent: ?*@This(),
 
-    pub fn init(pf: *ProfilerInstance, name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
+    pub fn init(profiler_instance_ptr: *ProfilerInstance, name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
+        const pf = profiler_instance_ptr;
         const self = try pf.allocator.create(@This());
         errdefer pf.allocator.destroy(self);
 

@@ -18,8 +18,9 @@ pub fn main(init: std.process.Init) !void {
     // Initialise global (mutable) instance
     const pf = Profiler.profiler_instance_ptr;
     pf.init(arena);
+    defer pf.deinit();
 
-    var printing_trace: *Trace = undefined;
+    var printing_trace: *Trace = undefined; // needed in scoped block
     const initial_setup_trace: *Trace = try .init(pf, "initial setup", @src());
 
     const args = try init.minimal.args.toSlice(arena);
@@ -103,35 +104,37 @@ pub fn main(init: std.process.Init) !void {
             const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
-            printing_trace = try .init(pf, "printing", @src());
-            try stdout_writer.print(
-                \\
-                \\Input size: {d}
-                \\Pair count: {d}
-                \\
-                \\Haversine sum average: {d}
-                \\
-                \\Validation:
-                \\Reference sum: {d}
-                \\Difference: {d}
-                \\
-                \\
-            ,
-                .{
-                    json_size,
-                    points.count,
-                    haversine_sum,
-                    reference_sum,
-                    haversine_sum - reference_sum,
-                },
-            );
+            {
+                printing_trace = try .init(pf, "printing", @src());
+                defer printing_trace.deinit();
+
+                try stdout_writer.print(
+                    \\
+                    \\Input size: {d}
+                    \\Pair count: {d}
+                    \\
+                    \\Haversine sum average: {d}
+                    \\
+                    \\Validation:
+                    \\Reference sum: {d}
+                    \\Difference: {d}
+                    \\
+                    \\
+                ,
+                    .{
+                        json_size,
+                        points.count,
+                        haversine_sum,
+                        reference_sum,
+                        haversine_sum - reference_sum,
+                    },
+                );
+            }
         },
     }
 
     // FLUSHING!
-    printing_trace.deinit();
-    try stdout_writer.flush();
-    try pf.deinit(stdout_writer);
+    try pf.print(stdout_writer);
     try stdout_writer.flush();
 }
 
