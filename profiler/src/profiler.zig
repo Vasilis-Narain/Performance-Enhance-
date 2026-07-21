@@ -1,46 +1,35 @@
-//* TODO(vasilis): figure out how to avoid all heap allocations (need a LIFO idea for parent tracking)
+const root = @import("root");
 const std = @import("std");
 const metrics = @import("metrics.zig");
 
 // ANSI color escape sequences
-const ANSI_RESET = "\x1b[0m";
-const ANSI_RED = "\x1b[31m";
-const ANSI_GREEN = "\x1b[32m";
-const ANSI_YELLOW = "\x1b[33m";
+const ansi_reset = "\x1b[0m";
+const ansi_red = "\x1b[31m";
+const ansi_green = "\x1b[32m";
+const ansi_yellow = "\x1b[33m";
 
-const MAX_TRACE_SIZE: u8 = 255;
+// If you're coming from C, these are the #ifndef's
+const profiler_enabled: bool = if (@hasDecl(root, "profiler_enabled")) root.profiler_enabled else true;
+const profiler_capacity: usize = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
 
-const Bitset = std.StaticBitSet(MAX_TRACE_SIZE);
+const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
+const cap: usize = if (profiler_enabled) profiler_capacity else 0;
 
 pub const ProfilerInstance = struct {
-    trace_stack: [MAX_TRACE_SIZE]*Trace,
-    fn_trace_stack: [MAX_TRACE_SIZE]Trace,
-    current: ?*Trace,
-    start_tick: u64,
-    trace_count: u8,
-    fn_trace_count: u8,
-    allocator: std.mem.Allocator,
+    trace_stack: [cap]Record = undefined,
+    fn_trace_stack: [cap]Record = undefined,
+    current: ?IndexInt = null,
+    start_tick: u64 = 0,
+    trace_count: IndexInt = 0,
+    fn_trace_count: IndexInt = 0,
 
-    pub fn init(self: *@This(), allocator: std.mem.Allocator) void {
-        self.* = .{
-            .allocator = allocator,
-            .trace_stack = undefined,
-            .fn_trace_stack = undefined,
-            .fn_trace_count = 0,
-            .trace_count = 0,
-            .start_tick = metrics.readCpuTimer(),
-            .current = null,
-        };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        var i: u8 = 0;
-        while (i < self.trace_count) : (i += 1) {
-            self.allocator.destroy(self.trace_stack[i]);
-        }
+    pub fn init(self: *@This()) void {
+        if (!profiler_enabled) return;
+        self.start_tick = metrics.readCpuTimer();
     }
 
     pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
+        if (!profiler_enabled) return;
         const process_elapsed = metrics.readCpuTimer() - self.start_tick;
         try writer.print(
             \\{s}
@@ -48,31 +37,31 @@ pub const ProfilerInstance = struct {
             \\                PROFILER STATS
             \\  ===========================================
             \\{s}
-            \\ | {s}Traces{s}:
+            \\ | {s}Block traces{s}:
             \\
-        , .{ ANSI_GREEN, ANSI_RESET, ANSI_YELLOW, ANSI_RESET });
-        var i: u8 = 0;
+        , .{ ansi_green, ansi_reset, ansi_yellow, ansi_reset });
+        var i: IndexInt = 0;
         while (i < self.trace_count) : (i += 1) {
             try writer.print(" |  {s}::{s}[{d}:{d}]: {s}{s}{s} => elapsed: {d} ({d:.2}%)\n", .{
                 self.trace_stack[i].src.file,
                 self.trace_stack[i].src.fn_name,
                 self.trace_stack[i].src.line,
                 self.trace_stack[i].src.column,
-                ANSI_GREEN,
+                ansi_green,
                 self.trace_stack[i].name,
-                ANSI_RESET,
+                ansi_reset,
                 self.trace_stack[i].elapsed_tick,
                 percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
             });
         }
-        try writer.print(" |\n | {s}Function traces:{s}\n", .{ ANSI_YELLOW, ANSI_RESET });
+        try writer.print(" |\n | {s}function traces:{s}\n", .{ ansi_yellow, ansi_reset });
         i = 0;
         while (i < self.fn_trace_count) : (i += 1) {
             try writer.print(" |  {s}::{s}{s}{s}[{d}:{d}] => elapsed: {d} ({d:.2}%)\n", .{
                 self.fn_trace_stack[i].src.file,
-                ANSI_GREEN,
+                ansi_green,
                 self.fn_trace_stack[i].name,
-                ANSI_RESET,
+                ansi_reset,
                 self.fn_trace_stack[i].src.line,
                 self.fn_trace_stack[i].src.column,
                 self.fn_trace_stack[i].elapsed_tick,
@@ -84,92 +73,141 @@ pub const ProfilerInstance = struct {
             @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(metrics.readCpuTimerFreq())) * 1000,
         });
     }
-};
 
-pub const Trace = struct {
-    start_tick: u64,
-    end_tick: u64,
-    elapsed_tick: u64,
-    elapsed_tick_from_child: u64,
-    name: []const u8,
-    src: std.builtin.SourceLocation,
-    profiler: *ProfilerInstance,
-    parent: ?*@This(),
+    pub fn startBlockTrace(pf: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
+        if (!profiler_enabled) return .{
+            .profiler = pf,
+            .idx = 0,
+            .kind = .dummy,
+        };
 
-    pub fn init(profiler_instance_ptr: *ProfilerInstance, comptime name: []const u8, comptime src: std.builtin.SourceLocation) !*@This() {
-        const pf = profiler_instance_ptr;
-        const self = try pf.allocator.create(@This());
-        errdefer pf.allocator.destroy(self);
+        if (pf.trace_count >= pf.trace_stack.len) {
+            std.log.err("Exceeded maximum traces. Edit profiler_capacity global to increase", .{});
+            return .{
+                .profiler = pf,
+                .idx = 0,
+                .kind = .dummy,
+            };
+        }
 
-        if (pf.trace_count >= pf.trace_stack.len) return error.TooManyTraces;
-
-        self.* = .{
+        const self: Record = .{
             .start_tick = metrics.readCpuTimer(),
             .end_tick = undefined,
             .elapsed_tick = 0,
             .elapsed_tick_from_child = 0,
             .name = name,
             .src = src,
-            .profiler = pf,
             .parent = pf.current,
+            .id = pf.trace_count,
         };
         pf.trace_stack[pf.trace_count] = self;
         pf.trace_count += 1;
-        pf.current = self;
+        pf.current = self.id;
 
-        return self;
+        return .{
+            .profiler = pf,
+            .idx = self.id,
+            .kind = .block,
+        };
     }
 
-    pub fn stop(self: *@This()) void {
-        self.end_tick = metrics.readCpuTimer();
-        // Note(vasilis): this feels like it should be strictly positive so I am gonna assume it is
-        self.elapsed_tick = (self.end_tick - self.start_tick) - self.elapsed_tick_from_child;
-
-        if (self.parent) |parent| {
-            parent.elapsed_tick_from_child += self.elapsed_tick;
-        }
-        self.profiler.current = self.parent;
-    }
-
-    pub fn initFnTrace(profiler_instance_ptr: *ProfilerInstance, comptime src: std.builtin.SourceLocation) *@This() {
-        const pf = profiler_instance_ptr;
-
+    pub fn startFnTrace(pf: *@This(), comptime src: std.builtin.SourceLocation) Trace {
+        if (!profiler_enabled) return .{
+            .profiler = pf,
+            .idx = 0,
+            .kind = .dummy,
+        };
         const S = struct {
             const _tag = src;
-            var idx: u32 = std.math.maxInt(u32);
+            var idx: IndexInt = profiler_capacity;
         };
 
-        if (S.idx != std.math.maxInt(u32)) {
+        if (S.idx != profiler_capacity) {
             const trace = &pf.fn_trace_stack[S.idx];
             trace.start_tick = metrics.readCpuTimer();
             trace.end_tick = undefined;
-            return trace;
+            return .{
+                .profiler = pf,
+                .idx = trace.id,
+                .kind = .function,
+            };
         }
 
         const i = pf.fn_trace_count;
-        std.debug.assert(i < pf.fn_trace_stack.len);
+        if (i >= pf.fn_trace_stack.len) {
+            std.log.err("Exceeded maximum traces. Edit profiler_capacity global to increase", .{});
+            return .{
+                .profiler = pf,
+                .idx = 0,
+                .kind = .dummy,
+            };
+        }
 
-        const self: Trace = .{
+        const self: Record = .{
             .start_tick = metrics.readCpuTimer(),
             .end_tick = undefined,
             .elapsed_tick = 0,
             .elapsed_tick_from_child = 0,
             .name = src.fn_name,
             .src = src,
-            .profiler = pf,
             .parent = null,
+            .id = i,
         };
 
         pf.fn_trace_stack[i] = self;
         pf.fn_trace_count += 1;
         S.idx = i;
-        return &pf.fn_trace_stack[S.idx];
+        return .{
+            .profiler = pf,
+            .idx = S.idx,
+            .kind = .function,
+        };
+    }
+};
+
+pub const Trace = struct {
+    profiler: *ProfilerInstance,
+    idx: IndexInt,
+    kind: enum { block, function, dummy },
+
+    pub fn stop(self: @This()) void {
+        if (!profiler_enabled) return;
+        switch (self.kind) {
+            .dummy => return,
+            .block => self.stopBlockTrace(),
+            .function => self.updateFnTrace(),
+        }
     }
 
-    pub fn updateFnTrace(self: *@This()) void {
-        self.end_tick = metrics.readCpuTimer();
-        self.elapsed_tick += self.end_tick - self.start_tick;
+    fn stopBlockTrace(self: @This()) void {
+        const curr_trace = &self.profiler.trace_stack[self.idx];
+
+        curr_trace.end_tick = metrics.readCpuTimer();
+        // Note(vasilis): this feels like it should be strictly positive so I am gonna assume it is
+        curr_trace.elapsed_tick = (curr_trace.end_tick - curr_trace.start_tick) - curr_trace.elapsed_tick_from_child;
+
+        if (curr_trace.parent) |parent_id| {
+            self.profiler.trace_stack[parent_id].elapsed_tick_from_child += curr_trace.elapsed_tick;
+        }
+        self.profiler.current = curr_trace.parent;
     }
+
+    fn updateFnTrace(self: @This()) void {
+        const curr_trace = &self.profiler.fn_trace_stack[self.idx];
+        curr_trace.end_tick = metrics.readCpuTimer();
+        curr_trace.elapsed_tick += curr_trace.end_tick - curr_trace.start_tick;
+    }
+};
+
+const Record = struct {
+    start_tick: u64,
+    end_tick: u64,
+    elapsed_tick: u64,
+    elapsed_tick_from_child: u64,
+    name: []const u8,
+    src: std.builtin.SourceLocation,
+    parent: ?IndexInt,
+    id: IndexInt,
 };
 
 fn percentageWorkDone(work_elapsed: u64, process_elapsed: u64) f64 {

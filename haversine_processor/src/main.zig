@@ -8,7 +8,11 @@ const Io = std.Io;
 
 const Haversine = @import("haversine");
 const Profiler = @import("profiler");
-const Trace = Profiler.Trace;
+const pf = &Profiler.instance;
+
+// Zig's way to set library globals (#ifndef if you're coming from C)
+pub const profiler_capacity: usize = 255; // Optional capacity override. Defaults to 255.
+pub const profiler_enabled = true; // Set to false for global no-op / almost-no-memory disable.
 
 pub fn main(init: std.process.Init) !void {
 
@@ -16,12 +20,10 @@ pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
 
     // Initialise global (mutable) instance
-    const pf = Profiler.profiler_instance_ptr;
-    pf.init(arena);
-    defer pf.deinit();
+    pf.init();
 
-    var printing_trace: *Trace = undefined; // needed in scoped block
-    const initial_setup_trace: *Trace = try .init(pf, "initial setup", @src());
+    //var printing_trace: *Trace = undefined; // needed in scoped block
+    const initial_setup_trace = pf.startBlockTrace("initial setup", @src());
 
     const args = try init.minimal.args.toSlice(arena);
     var opts: Opts = parseArgsCli(arena, args) catch return;
@@ -35,7 +37,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
 
-    initial_setup_trace.deinit();
+    initial_setup_trace.stop();
 
     switch (opts.call_type) {
         .generate => {
@@ -71,8 +73,8 @@ pub fn main(init: std.process.Init) !void {
             try byte_writer.flush();
         },
         .process => {
-            const untracked_misc: *Trace = try .init(pf, "untracked misc", @src());
-            defer untracked_misc.deinit();
+            const untracked_misc = pf.startBlockTrace("untracked misc", @src());
+            defer untracked_misc.stop();
             // Not bothering with catching errors cause realistically if we can't open the files we should crash.
 
             // Init json file reader
@@ -84,9 +86,11 @@ pub fn main(init: std.process.Init) !void {
             var json_file_reader = json_file.reader(io, json_buffer);
             const json_reader = &json_file_reader.interface;
 
-            const json_read_trace: *Trace = try .init(pf, "json read", @src());
-            try json_reader.fill(json_size);
-            json_read_trace.deinit();
+            {
+                const json_read_trace = pf.startBlockTrace("json read", @src());
+                defer json_read_trace.stop();
+                try json_reader.fill(json_size);
+            }
 
             // Init byte file reader
             var byte_file = try Io.Dir.cwd().openFile(io, opts.byte_file_name, .{ .mode = .read_only });
@@ -105,8 +109,8 @@ pub fn main(init: std.process.Init) !void {
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
             {
-                printing_trace = try .init(pf, "printing", @src());
-                defer printing_trace.deinit();
+                const printing_trace = pf.startBlockTrace("printing", @src());
+                defer printing_trace.stop();
 
                 try stdout_writer.print(
                     \\

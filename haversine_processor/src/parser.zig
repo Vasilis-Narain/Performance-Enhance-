@@ -5,7 +5,7 @@ const Io = std.Io;
 const hs = @import("haversine.zig");
 
 const Profiler = @import("profiler");
-const Trace = Profiler.Trace;
+const pf = &Profiler.instance;
 
 /// Parses input json for Haversine Distance Problem:
 ///
@@ -19,8 +19,10 @@ const Trace = Profiler.Trace;
 ///     {...}
 /// ]}`
 pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points {
-    const pf = Profiler.profiler_instance_ptr;
-    const misc_setup_trace: *Trace = try .init(pf, "parse setup", @src());
+    const parse_json_fn_trace = pf.startFnTrace(@src());
+    defer parse_json_fn_trace.stop();
+
+    const misc_setup_trace = pf.startBlockTrace("parse setup", @src());
     var flags: Flags = .{};
 
     var int_part_buffer: [3]u8 = undefined;
@@ -31,11 +33,11 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
 
     // 1024 seems like a sensible starting array size for this problem
     var output_points: Points = try .init(allocator, 1024);
-    misc_setup_trace.deinit();
+    misc_setup_trace.stop();
 
     {
-        const parse_json_trace: *Trace = try .init(pf, "parse json and sum", @src());
-        defer parse_json_trace.deinit();
+        const parse_json_trace = pf.startBlockTrace("parse json and sum", @src());
+        defer parse_json_trace.stop();
 
         // Skip first line
         while (json_reader.takeByte()) |char| {
@@ -161,7 +163,10 @@ const Flags = struct {
 };
 
 /// Clinger Fast Path algorithm
-fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f64 {
+pub fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f64 {
+    const buildFloat_fn_trace = pf.startFnTrace(@src());
+    defer buildFloat_fn_trace.stop();
+
     var significand: u64 = 0;
     for (int_digits) |ascii_digit| {
         significand = significand * 10 + (ascii_digit - '0');

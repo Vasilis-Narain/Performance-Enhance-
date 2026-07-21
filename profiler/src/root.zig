@@ -1,52 +1,50 @@
-//! Usage:
-//! ```
-//!    const Profiler = @import("profiler");
-//!    const Trace = Profiler.Trace;
+//! # Usage
 //!
-//!    // Somewhere at the top of the program's entry point (main)
-//!    const pf = Profiler.profiler_stack_ptr;
-//!    pf.init(std.mem.Allocator); // make sure the Allocator passed in's intended life time matches the one intended for the profiler
-//!                                // this same allocator will also be used by all the traces.
+//! Everything sits in one global instance, so you don't have to thread a
+//! profiler through your function signatures. Fixed size arrays, no
+//! allocations.
 //!
-//!    // .deinit() only required if initialized with an Allocator that is not an Arena
-//!    // and if the profiler isn't meant to run for the program's lifetime.
-//!    defer pf.deinit();
+//! ```zig
+//! const Profiler = @import("profiler");
+//! const pf = &Profiler.instance;  // same instance in every file
 //!
+//! pf.init();  // once at the top of main, just stamps the start time
 //!
-//!    // For traces
-//!    {
-//!        // Initialise trace and stop with defer when out of scope.
-//!        const main_loop_trace: *Trace = try .init(pf, "main_loop", @src());
-//!        defer main_loop_trace.stop();
+//! // Block traces measure whatever scope you put them in.
+//! {
+//!     const main_loop = pf.startBlockTrace("main_loop", @src());
+//!     defer main_loop.stop();
+//! }
 //!
-//!        //inner loop
-//!        const inner_loop_trace: *Trace = try .init(pf, "inner_loop", @src());
-//!        while (true) {
-//!            // Doing the thing
-//!        }
-//!        inner_loop_trace.stop(); // could've also used a block with defer like with main_loop_trace
-//!                                   // but sometimes the thing we want to measure can't be blocked off
-//!                                   // from the rest of the program. In those cases just do this.
-//!    }
+//! // Function traces: drop one line at the top of a function and every
+//! // call to it gets timed. The times add up across all the calls.
+//! fn hotFn() void {
+//!     const t = pf.startFnTrace(@src());
+//!     defer t.stop();
+//! }
 //!
-//!    try pf.print(*std.Io.Writer); //prints all traces to the chosen Writer
+//! try pf.print(writer);  // dumps to whatever *std.Io.Writer you give it
 //! ```
 //!
-//! Initializing the Profiler.profiler_instance once in main allows for traces to be initialized in, and ran from,
-//! multiple files as long as this library is imported to that file. Without needing to change function signatures.
+//! # The \#ifndefs
 //!
+//! Declare either of these at file scope in your root file (the app's main):
+//!
+//! ```zig
+//! pub const profiler_capacity: usize = 1024; // 255 by default, per array
+//! pub const profiler_enabled: bool = false;  // true by default
+//! ```
+//!
+//! Block and function traces get an array each. Anything past that gets
+//! dropped (and logged), it won't crash. Setting profiler_enabled to false
+//! compiles the whole thing out, arrays included.
 const profiler = @import("profiler.zig");
-pub const Trace = profiler.Trace;
 
 /// Set of wrapper functions for performance counters and frequencies
 pub const metrics = @import("metrics.zig");
 
-//Note(vasilis): Not sure if this is the proper way to do this.. I want the user
-//to be able to call .init once in main, and then by simply importing
-//this file (or the library) to wherever is needed then they can
-//have access to the same global Profiler instance
-var internal_profiler_instance: profiler.ProfilerInstance = undefined;
-pub const profiler_instance_ptr = &internal_profiler_instance;
+// The Singleton
+pub var instance: profiler.ProfilerInstance = .{};
 
 test {
     _ = metrics;

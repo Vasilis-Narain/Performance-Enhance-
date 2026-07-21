@@ -2,18 +2,19 @@
 const std = @import("std");
 const Io = std.Io;
 
+// This is how to import and setup the profiler. profiler_capacity defaults to 255.
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
-const Trace = Profiler.Trace;
+pub const profiler_capacity: usize = 1024;
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
     const arena: std.mem.Allocator = init.arena.allocator();
 
-    // .deinit isn't actually needed here since it runs for full program time
-    var pf = Profiler.profiler_instance_ptr;
-    pf.init(arena);
-    defer pf.deinit();
+    // Make sure to call .init() so that the total process time can be calculated. Obviously finding out
+    // the start_tick can only be achieved in runtime.
+    var pf = &Profiler.instance;
+    pf.init();
 
     // Accessing command line arguments:
     const args = try init.minimal.args.toSlice(arena);
@@ -22,14 +23,14 @@ pub fn main(init: std.process.Init) !void {
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
 
-    const stdout_setup_trace: *Trace = try .init(pf, "stdout_setup_trace", @src());
+    const stdout_setup_trace = pf.startBlockTrace("stdout_setup_trace", @src());
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
     const stdout_writer = &stdout_file_writer.interface;
     stdout_setup_trace.stop();
 
     {
-        const main_loop_trace: *Trace = try .init(pf, "main_loop_trace", @src());
+        const main_loop_trace = pf.startBlockTrace("main_loop_trace", @src());
         defer main_loop_trace.stop();
         try stdout_writer.print("CPU Frequency Estimation:\n", .{});
         const os_freq = metrics.getOsTimerFreq();
@@ -42,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
         const os_wait_time = os_freq * milliseconds_to_wait / 1000;
 
         {
-            const inner_loop_trace: *Trace = try .init(pf, "inner_loop_trace", @src());
+            const inner_loop_trace = pf.startBlockTrace("inner_loop_trace", @src());
             defer inner_loop_trace.stop();
             while (os_elapsed < os_wait_time) {
                 os_end = metrics.readOsTimer();
@@ -50,7 +51,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         {
-            const fn_trace_tester: *Trace = try .init(pf, "fn_trace_tester", @src());
+            const fn_trace_tester = pf.startBlockTrace("fn_trace_tester", @src());
             defer fn_trace_tester.stop();
 
             var a: u32 = 50;
@@ -69,7 +70,7 @@ pub fn main(init: std.process.Init) !void {
         const cpu_freq = if (os_elapsed > 0) os_freq * cpu_elapsed / os_elapsed else 0;
 
         {
-            const print_trace: *Trace = try .init(pf, "print_trace", @src());
+            const print_trace = pf.startBlockTrace("print_trace", @src());
             defer print_trace.stop();
 
             try stdout_writer.print("    OS Timer: {d} -> {d} = {d} elapsed\n", .{ os_start, os_end, os_elapsed });
@@ -90,8 +91,8 @@ pub fn main(init: std.process.Init) !void {
 
 // Using volatile to make sure this thing actually runs. For testing
 fn testFnTrace(a: u32, b: u32) u32 {
-    const fn_tester: *Trace = .initFnTrace(Profiler.profiler_instance_ptr, @src());
-    defer fn_tester.updateFnTrace();
+    const fn_tester = Profiler.instance.startFnTrace(@src());
+    defer fn_tester.stop();
     var ret: u32 = undefined;
     asm volatile (
         \\ addl %eax, %edx
