@@ -19,7 +19,17 @@ const cap: usize = if (profiler_enabled) profiler_capacity else 0;
 
 const Bitset = std.StaticBitSet(cap);
 
-pub const ProfilerInstance = struct {
+/// The Global Instance
+pub const ProfilerInstance = if (!profiler_enabled) struct {
+    pub fn init(_: *@This()) void {}
+    pub fn print(_: *const @This(), _: *std.Io.Writer) !void {}
+    pub fn startBlockTrace(_: *@This(), comptime _: []const u8, comptime _: std.builtin.SourceLocation) Trace {
+        return .{};
+    }
+    pub fn startFnTrace(_: *@This(), comptime _: std.builtin.SourceLocation) Trace {
+        return .{};
+    }
+} else struct {
     trace_stack: [cap]Record = undefined,
     trace_bitset: Bitset = .initEmpty(),
     fn_trace_bitset: Bitset = .initEmpty(),
@@ -27,11 +37,13 @@ pub const ProfilerInstance = struct {
     start_tick: u64 = 0,
     trace_count: IndexInt = 0,
 
+    /// Stamps the start tick for the entire process
     pub fn init(self: *@This()) void {
         if (!profiler_enabled) return;
         self.start_tick = metrics.readCpuTimer();
     }
 
+    /// Prints to the supplied Writer interface.
     pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
         if (!profiler_enabled) return;
         const process_elapsed = metrics.readCpuTimer() - self.start_tick;
@@ -46,7 +58,7 @@ pub const ProfilerInstance = struct {
         , .{ ansi_green, ansi_reset, ansi_yellow, ansi_reset });
         var block_iterator = self.trace_bitset.iterator(.{});
         while (block_iterator.next()) |i| {
-            try writer.print(" |  {s}::{s}[{d}:{d}]({d}): {s}{s}{s} => elapsed: {d} ({d:.2}%)\n", .{
+            try writer.print(" |  {s}::{s}[{d}:{d}]({d}): {s}{s}{s} => elapsed: {d} ({d:.2}%", .{
                 self.trace_stack[i].src.file,
                 self.trace_stack[i].src.fn_name,
                 self.trace_stack[i].src.line,
@@ -58,11 +70,17 @@ pub const ProfilerInstance = struct {
                 self.trace_stack[i].elapsed_tick,
                 percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
             });
+            if (self.trace_stack[i].elapsed_tick != self.trace_stack[i].inclusive_tick) {
+                try writer.print(", {d:.2}% w/children", .{
+                    percentageWorkDone(self.trace_stack[i].inclusive_tick, process_elapsed),
+                });
+            }
+            try writer.writeAll(")\n");
         }
         try writer.print(" |\n | {s}Function traces:{s}\n", .{ ansi_yellow, ansi_reset });
         var fn_iterator = self.fn_trace_bitset.iterator(.{});
         while (fn_iterator.next()) |i| {
-            try writer.print(" |  {s}::{s}{s}{s}[{d}:{d}]({d}) => elapsed: {d} ({d:.2}%)\n", .{
+            try writer.print(" |  {s}::{s}{s}{s}[{d}:{d}]({d}) => elapsed: {d} ({d:.2}%", .{
                 self.trace_stack[i].src.file,
                 ansi_green,
                 self.trace_stack[i].name,
@@ -73,6 +91,12 @@ pub const ProfilerInstance = struct {
                 self.trace_stack[i].elapsed_tick,
                 percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
             });
+            if (self.trace_stack[i].elapsed_tick != self.trace_stack[i].inclusive_tick) {
+                try writer.print(", {d:.2}% w/children", .{
+                    percentageWorkDone(self.trace_stack[i].inclusive_tick, process_elapsed),
+                });
+            }
+            try writer.writeAll(")\n");
         }
         try writer.print(" |\n | Total elapsed: {d} / {d:.4}ms\n\n", .{
             process_elapsed,
@@ -134,6 +158,7 @@ pub const ProfilerInstance = struct {
             .end_tick = undefined,
             .elapsed_tick = 0,
             .elapsed_tick_from_child = 0,
+            .inclusive_tick = 0,
             .name = name,
             .src = src,
             .depth = 1,
@@ -158,22 +183,31 @@ pub const ProfilerInstance = struct {
         };
     }
 
+    /// Starts a 'block trace' (similar to a Tracy zone) allowing one to place traces
+    /// anywhere in their code.
     pub fn startBlockTrace(pf: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
         return startTrace(pf, .block, name, src);
     }
 
+    /// Exactly like a block trace except the 'name' is derived from the function name.
+    /// To be used at the top of a function to achieve the expected result.
     pub fn startFnTrace(pf: *@This(), comptime src: std.builtin.SourceLocation) Trace {
         return startTrace(pf, .function, src.fn_name, src);
     }
 };
 
-pub const Trace = struct {
+const Trace = if (!profiler_enabled) struct {
+    pub fn stop(_: @This()) void {}
+} else struct {
     profiler: *ProfilerInstance,
     idx: IndexInt,
     parent: ?IndexInt,
     kind: enum { block, function, dummy },
 
+    // Usually called with `defer t.stop()` after having started a trace.
+    // This will handle accumulating or not depending on the kind of trace.
     pub fn stop(self: @This()) void {
+        if (!profiler_enabled) return;
         const curr_trace = &self.profiler.trace_stack[self.idx];
 
         self.profiler.current = self.parent;
@@ -185,6 +219,7 @@ pub const Trace = struct {
         curr_trace.end_tick = metrics.readCpuTimer();
         const curr_time_block = curr_trace.end_tick - curr_trace.start_tick;
 
+        curr_trace.inclusive_tick += curr_time_block;
         curr_trace.elapsed_tick += curr_time_block - curr_trace.elapsed_tick_from_child;
 
         if (self.parent) |parent_id| {
@@ -198,6 +233,7 @@ const Record = struct {
     end_tick: u64,
     elapsed_tick: u64,
     elapsed_tick_from_child: u64,
+    inclusive_tick: u64,
     depth: u32,
     name: []const u8,
     src: std.builtin.SourceLocation,
@@ -209,7 +245,7 @@ fn percentageWorkDone(work_elapsed: u64, process_elapsed: u64) f64 {
     return (@as(f64, @floatFromInt(work_elapsed)) / @as(f64, @floatFromInt(process_elapsed))) * 100;
 }
 
-// ---------------------------------------------------------------- tests
+// TESTS
 
 fn burn(n: u64) void {
     var acc: u64 = 0;
@@ -243,7 +279,6 @@ test "exclusive times partition the root span exactly" {
     const root_rec = pf.trace_stack[0];
     try testing.expect(root_rec.count == 1);
 
-    // single entry, so this is the root's raw wall span
     const root_raw = root_rec.elapsed_tick + root_rec.elapsed_tick_from_child;
 
     var sum: u64 = 0;
@@ -291,7 +326,6 @@ test "child time does not leak between entries" {
 
     try testing.expect(p_rec.count == 5);
     try testing.expect(c_rec.count == 5);
-    // without the from_child reset, p's exclusive underflows u64
     try testing.expect(p_rec.elapsed_tick < std.math.maxInt(u64) / 2);
     try testing.expect(p_rec.elapsed_tick > 0);
 }
@@ -329,7 +363,6 @@ test "fn trace nested in a block trace reports to its parent" {
     const outer_rec = pf.trace_stack[0];
     const inner_rec = pf.trace_stack[1];
 
-    // the bug you just hit: parent never learned about the fn trace
     try testing.expect(outer_rec.elapsed_tick_from_child >= inner_rec.elapsed_tick);
     try testing.expect(pf.current == null);
 }

@@ -10,7 +10,8 @@
 //!
 //! pf.init();  // once at the top of main, just stamps the start time
 //!
-//! // Block traces measure whatever scope you put them in.
+//! // Block traces measure whatever scope you put them in. Works as expected
+//! // if used inside a loop (the timer accumulates)
 //! {
 //!     const main_loop = pf.startBlockTrace("main_loop", @src());
 //!     defer main_loop.stop();
@@ -26,7 +27,7 @@
 //! try pf.print(writer);  // dumps to whatever *std.Io.Writer you give it
 //! ```
 //!
-//! # The \#ifndefs
+//! # The Zig ifndefs
 //!
 //! Declare either of these at file scope in your root file (the app's main):
 //!
@@ -35,9 +36,11 @@
 //! pub const profiler_enabled: bool = false;  // true by default
 //! ```
 //!
-//! Block and function traces get an array each. Anything past that gets
-//! dropped (and logged), it won't crash. Setting profiler_enabled to false
-//! compiles the whole thing out, arrays included.
+//! Attempting to add a trace past `profiler_capacity` will result in it being
+//! dropped (and logged to stderr), however it won't crash.
+//!
+//! Setting profiler_enabled to false compiles the whole thing out, arrays included.
+//!
 const profiler = @import("profiler.zig");
 
 /// Set of wrapper functions for performance counters and frequencies

@@ -5,7 +5,8 @@ const Io = std.Io;
 // This is how to import and setup the profiler. profiler_capacity defaults to 255.
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
-pub const profiler_capacity: usize = 1024;
+pub const profiler_capacity: usize = 8; // defaults to 255
+pub const profiler_enabled = false; // defaults to true
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.
@@ -13,7 +14,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Make sure to call .init() so that the total process time can be calculated. Obviously finding out
     // the start_tick can only be achieved in runtime.
-    var pf = &Profiler.instance;
+    const pf = &Profiler.instance; // just a handy alias. Could use &Profiler.isntance directly
     pf.init();
 
     // Accessing command line arguments:
