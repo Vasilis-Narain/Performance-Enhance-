@@ -20,11 +20,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const mod_obj = b.addObject(.{
-        .name = "mod_obj",
-        .root_module = mod,
-    });
-
     const exe = b.addExecutable(.{
         .name = "profiler",
         .root_module = b.createModule(.{
@@ -65,6 +60,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    const mod_obj = b.addObject(.{
+        .name = "mod_obj",
+        .root_module = mod,
+    });
 
     const install_docs = b.addInstallDirectory(.{
         .source_dir = mod_obj.getEmittedDocs(),

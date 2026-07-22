@@ -43,9 +43,9 @@ pub fn main(init: std.process.Init) !void {
         const os_wait_time = os_freq * milliseconds_to_wait / 1000;
 
         {
-            const inner_loop_trace = pf.startBlockTrace("inner_loop_trace", @src());
-            defer inner_loop_trace.stop();
             while (os_elapsed < os_wait_time) {
+                const inner_loop_trace = pf.startBlockTrace("inner_loop_trace", @src());
+                defer inner_loop_trace.stop();
                 os_end = metrics.readOsTimer();
                 os_elapsed = os_end - os_start;
             }
@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
 
             // Some random ops
             for (0..1_000_000) |i| {
-                const c = testFnTrace(a, b);
+                const c = testFnTrace(a, b, 5);
                 a +%= b -% @as(u32, @intCast(i));
                 b +%= c;
             }
@@ -90,9 +90,10 @@ pub fn main(init: std.process.Init) !void {
 }
 
 // Using volatile to make sure this thing actually runs. For testing
-fn testFnTrace(a: u32, b: u32) u32 {
+fn testFnTrace(a: u32, b: u32, n: u32) u32 {
     const fn_tester = Profiler.instance.startFnTrace(@src());
     defer fn_tester.stop();
+    if (n == 0) return 0;
     var ret: u32 = undefined;
     asm volatile (
         \\ addl %eax, %edx
@@ -100,5 +101,5 @@ fn testFnTrace(a: u32, b: u32) u32 {
         : [a] "{eax}" (a),
           [b] "{edx}" (b),
     );
-    return ret;
+    return ret +% testFnTrace(a, b, n - 1);
 }
