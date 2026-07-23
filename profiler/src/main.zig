@@ -6,7 +6,7 @@ const Io = std.Io;
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
 pub const profiler_capacity: usize = 8; // defaults to 255
-pub const profiler_enabled = false; // defaults to true
+pub const profiler_enabled = true; // defaults to true
 
 pub fn main(init: std.process.Init) !void {
     // This is appropriate for anything that lives as long as the process.

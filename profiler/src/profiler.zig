@@ -21,6 +21,7 @@ const Bitset = std.StaticBitSet(cap);
 
 /// The Global Instance
 pub const ProfilerInstance = if (!profiler_enabled) struct {
+    // Stubs to ensure no-op and no-memory usage if profiler is not enabled
     pub fn init(_: *@This()) void {}
     pub fn print(_: *const @This(), _: *std.Io.Writer) !void {}
     pub fn startBlockTrace(_: *@This(), comptime _: []const u8, comptime _: std.builtin.SourceLocation) Trace {
@@ -43,7 +44,7 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
         self.start_tick = metrics.readCpuTimer();
     }
 
-    /// Prints to the supplied Writer interface.
+    /// Prints results to the supplied `std.Io.Writer` interface.
     pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
         if (!profiler_enabled) return;
         const process_elapsed = metrics.readCpuTimer() - self.start_tick;
@@ -108,7 +109,11 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
         const T = @TypeOf(kind);
         comptime {
             if (@typeInfo(T) != .enum_literal) {
-                @compileError("Expected an enum type, found " ++ @typeName(T));
+                @compileError("Expected an enum literal, found `" ++ @typeName(T) ++ "`");
+            }
+            switch (kind) {
+                .function, .block => {},
+                else => @compileError("Expected enum literals `function, block`, found `" ++ @tagName(kind) ++ "`"),
             }
         }
         if (!profiler_enabled) return .{
@@ -131,7 +136,6 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
                 trace.start_tick = metrics.readCpuTimer();
                 trace.elapsed_tick_from_child = 0;
             }
-            trace.end_tick = undefined;
             trace.depth += 1;
             pf.current = S.idx;
             return .{
@@ -155,7 +159,6 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
 
         const self: Record = .{
             .start_tick = metrics.readCpuTimer(),
-            .end_tick = undefined,
             .elapsed_tick = 0,
             .elapsed_tick_from_child = 0,
             .inclusive_tick = 0,
@@ -166,7 +169,7 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
             .count = 0,
         };
         pf.trace_stack[id] = self;
-        pf.trace_count += 1;
+        pf.trace_count +|= 1;
         pf.current = id;
         S.idx = id;
         switch (kind) {
@@ -183,16 +186,16 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
         };
     }
 
-    /// Starts a 'block trace' (similar to a Tracy zone) allowing one to place traces
+    /// Starts a `block trace` (similar to a Tracy zone) allowing one to place traces
     /// anywhere in their code.
-    pub fn startBlockTrace(pf: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
-        return startTrace(pf, .block, name, src);
+    pub fn startBlockTrace(profiler_instance: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
+        return startTrace(profiler_instance, .block, name, src);
     }
 
-    /// Exactly like a block trace except the 'name' is derived from the function name.
+    /// Exactly like a block trace except the `name` is derived from the function name.
     /// To be used at the top of a function to achieve the expected result.
-    pub fn startFnTrace(pf: *@This(), comptime src: std.builtin.SourceLocation) Trace {
-        return startTrace(pf, .function, src.fn_name, src);
+    pub fn startFnTrace(profiler_instance: *@This(), comptime src: std.builtin.SourceLocation) Trace {
+        return startTrace(profiler_instance, .function, src.fn_name, src);
     }
 };
 
@@ -213,11 +216,10 @@ const Trace = if (!profiler_enabled) struct {
         self.profiler.current = self.parent;
 
         curr_trace.depth -= 1;
-        curr_trace.count += 1;
+        curr_trace.count +|= 1;
         if (curr_trace.depth != 0) return;
 
-        curr_trace.end_tick = metrics.readCpuTimer();
-        const curr_time_block = curr_trace.end_tick - curr_trace.start_tick;
+        const curr_time_block = metrics.readCpuTimer() - curr_trace.start_tick;
 
         curr_trace.inclusive_tick += curr_time_block;
         curr_trace.elapsed_tick += curr_time_block - curr_trace.elapsed_tick_from_child;
@@ -230,7 +232,6 @@ const Trace = if (!profiler_enabled) struct {
 
 const Record = struct {
     start_tick: u64,
-    end_tick: u64,
     elapsed_tick: u64,
     elapsed_tick_from_child: u64,
     inclusive_tick: u64,
