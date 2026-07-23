@@ -8,7 +8,6 @@ const Io = std.Io;
 
 const Haversine = @import("haversine");
 const Profiler = @import("profiler");
-const pf = &Profiler.instance;
 
 // Zig's way to set library globals (#ifndef if you're coming from C)
 pub const profiler_capacity: usize = 255; // Optional capacity override. Defaults to 255.
@@ -20,9 +19,9 @@ pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
 
     // Initialise global (mutable) instance
+    const pf = &Profiler.instance;
     pf.init();
 
-    //var printing_trace: *Trace = undefined; // needed in scoped block
     const initial_setup_trace = pf.startBlockTrace("initial setup", @src());
 
     const args = try init.minimal.args.toSlice(arena);
