@@ -7,6 +7,10 @@ const metrics = @import("metrics.zig");
 // If you're coming from C, these are the #ifndef's
 const profiler_mode = if (@hasDecl(root, "profiler_mode")) root.profiler_mode else .enabled;
 comptime {
+    const T = @TypeOf(profiler_mode);
+    if (@typeInfo(T) != .enum_literal) {
+        @compileError("`profiler_mode` must be an enum literal, found `" ++ @typeName(T) ++ "`. Supported modes are `enabled, disabled, process_timer`.");
+    }
     switch (profiler_mode) {
         .enabled, .disabled, .process_timer => {},
         else => {
