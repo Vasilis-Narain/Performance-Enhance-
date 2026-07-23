@@ -4,20 +4,19 @@ const testing = std.testing;
 
 const metrics = @import("metrics.zig");
 
+// If you're coming from C, these are the #ifndef's
+const profiler_enabled: bool = if (@hasDecl(root, "profiler_enabled")) root.profiler_enabled else true;
+const profiler_capacity: usize = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
+const cap: usize = if (profiler_enabled) profiler_capacity else 0;
+
+const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
+const Bitset = std.StaticBitSet(cap);
+
 // ANSI color escape sequences
 const ansi_reset = "\x1b[0m";
 const ansi_red = "\x1b[31m";
 const ansi_green = "\x1b[32m";
 const ansi_yellow = "\x1b[33m";
-
-// If you're coming from C, these are the #ifndef's
-const profiler_enabled: bool = if (@hasDecl(root, "profiler_enabled")) root.profiler_enabled else true;
-const profiler_capacity: usize = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
-
-const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
-const cap: usize = if (profiler_enabled) profiler_capacity else 0;
-
-const Bitset = std.StaticBitSet(cap);
 
 /// The Global Instance
 pub const ProfilerInstance = if (!profiler_enabled) struct {
@@ -68,10 +67,10 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
                 ansi_green,
                 self.trace_stack[i].name,
                 ansi_reset,
-                self.trace_stack[i].elapsed_tick,
-                percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
+                self.trace_stack[i].exclusive_tick,
+                percentageWorkDone(self.trace_stack[i].exclusive_tick, process_elapsed),
             });
-            if (self.trace_stack[i].elapsed_tick != self.trace_stack[i].inclusive_tick) {
+            if (self.trace_stack[i].exclusive_tick != self.trace_stack[i].inclusive_tick) {
                 try writer.print(", {d:.2}% w/children", .{
                     percentageWorkDone(self.trace_stack[i].inclusive_tick, process_elapsed),
                 });
@@ -89,10 +88,10 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
                 self.trace_stack[i].src.line,
                 self.trace_stack[i].src.column,
                 self.trace_stack[i].count,
-                self.trace_stack[i].elapsed_tick,
-                percentageWorkDone(self.trace_stack[i].elapsed_tick, process_elapsed),
+                self.trace_stack[i].exclusive_tick,
+                percentageWorkDone(self.trace_stack[i].exclusive_tick, process_elapsed),
             });
-            if (self.trace_stack[i].elapsed_tick != self.trace_stack[i].inclusive_tick) {
+            if (self.trace_stack[i].exclusive_tick != self.trace_stack[i].inclusive_tick) {
                 try writer.print(", {d:.2}% w/children", .{
                     percentageWorkDone(self.trace_stack[i].inclusive_tick, process_elapsed),
                 });
@@ -159,7 +158,7 @@ pub const ProfilerInstance = if (!profiler_enabled) struct {
 
         const self: Record = .{
             .start_tick = metrics.readCpuTimer(),
-            .elapsed_tick = 0,
+            .exclusive_tick = 0,
             .elapsed_tick_from_child = 0,
             .inclusive_tick = 0,
             .name = name,
@@ -222,7 +221,7 @@ const Trace = if (!profiler_enabled) struct {
         const curr_time_block = metrics.readCpuTimer() - curr_trace.start_tick;
 
         curr_trace.inclusive_tick += curr_time_block;
-        curr_trace.elapsed_tick += curr_time_block - curr_trace.elapsed_tick_from_child;
+        curr_trace.exclusive_tick += curr_time_block - curr_trace.elapsed_tick_from_child;
 
         if (self.parent) |parent_id| {
             self.profiler.trace_stack[parent_id].elapsed_tick_from_child += curr_time_block;
@@ -232,7 +231,7 @@ const Trace = if (!profiler_enabled) struct {
 
 const Record = struct {
     start_tick: u64,
-    elapsed_tick: u64,
+    exclusive_tick: u64,
     elapsed_tick_from_child: u64,
     inclusive_tick: u64,
     depth: u32,
@@ -280,11 +279,11 @@ test "exclusive times partition the root span exactly" {
     const root_rec = pf.trace_stack[0];
     try testing.expect(root_rec.count == 1);
 
-    const root_raw = root_rec.elapsed_tick + root_rec.elapsed_tick_from_child;
+    const root_raw = root_rec.exclusive_tick + root_rec.elapsed_tick_from_child;
 
     var sum: u64 = 0;
     var i: IndexInt = 0;
-    while (i < pf.trace_count) : (i += 1) sum += pf.trace_stack[i].elapsed_tick;
+    while (i < pf.trace_count) : (i += 1) sum += pf.trace_stack[i].exclusive_tick;
 
     try testing.expectEqual(root_raw, sum);
 }
@@ -327,8 +326,8 @@ test "child time does not leak between entries" {
 
     try testing.expect(p_rec.count == 5);
     try testing.expect(c_rec.count == 5);
-    try testing.expect(p_rec.elapsed_tick < std.math.maxInt(u64) / 2);
-    try testing.expect(p_rec.elapsed_tick > 0);
+    try testing.expect(p_rec.exclusive_tick < std.math.maxInt(u64) / 2);
+    try testing.expect(p_rec.exclusive_tick > 0);
 }
 
 fn recurse(pf: *ProfilerInstance, depth: u32) void {
@@ -348,7 +347,7 @@ test "recursion counts every entry but accumulates once" {
     try testing.expect(pf.trace_stack[0].count == 5);
     try testing.expect(pf.trace_stack[0].depth == 0);
     try testing.expect(pf.current == null);
-    try testing.expect(pf.trace_stack[0].elapsed_tick < std.math.maxInt(u64) / 2);
+    try testing.expect(pf.trace_stack[0].exclusive_tick < std.math.maxInt(u64) / 2);
 }
 
 test "fn trace nested in a block trace reports to its parent" {
@@ -364,7 +363,7 @@ test "fn trace nested in a block trace reports to its parent" {
     const outer_rec = pf.trace_stack[0];
     const inner_rec = pf.trace_stack[1];
 
-    try testing.expect(outer_rec.elapsed_tick_from_child >= inner_rec.elapsed_tick);
+    try testing.expect(outer_rec.elapsed_tick_from_child >= inner_rec.exclusive_tick);
     try testing.expect(pf.current == null);
 }
 
