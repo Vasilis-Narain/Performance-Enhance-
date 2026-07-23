@@ -36,9 +36,6 @@ pub fn parseJson(allocator: std.mem.Allocator, json_reader: *Io.Reader) !Points 
     misc_setup_trace.stop();
 
     {
-        const parse_json_trace = pf.startBlockTrace("parse json and sum", @src());
-        defer parse_json_trace.stop();
-
         // Skip first line
         while (json_reader.takeByte()) |char| {
             if (char == '\n' or char == '\r') {
@@ -164,9 +161,6 @@ const Flags = struct {
 
 /// Clinger Fast Path algorithm
 pub fn buildFloat(int_digits: []u8, fractional_digits: []u8, is_negative: bool) f64 {
-    const buildFloat_fn_trace = pf.startFnTrace(@src());
-    defer buildFloat_fn_trace.stop();
-
     var significand: u64 = 0;
     for (int_digits) |ascii_digit| {
         significand = significand * 10 + (ascii_digit - '0');

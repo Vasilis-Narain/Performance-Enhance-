@@ -10,7 +10,7 @@ const Haversine = @import("haversine");
 const Profiler = @import("profiler");
 
 // Zig's way to set library globals (#ifndef if you're coming from C)
-pub const profiler_capacity: usize = 255; // Optional capacity override. Defaults to 255.
+pub const profiler_capacity = -16; // Optional capacity override. Defaults to 255.
 pub const profiler_mode = .enabled; // Set to .disabled for global no-op / no-memory disable.
 
 pub fn main(init: std.process.Init) !void {

@@ -5,6 +5,21 @@ const testing = std.testing;
 const metrics = @import("metrics.zig");
 
 // If you're coming from C, these are the #ifndef's
+const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
+comptime {
+    const T = @TypeOf(profiler_capacity);
+    if (@typeInfo(T) != .comptime_int) {
+        @compileError("Type of `profiler_capacity` must be able to coerce to `comptime_int`, found `" ++
+            @typeName(T) ++ "`");
+    }
+    if (profiler_capacity < 0) {
+        @compileError("`profiler_capacity` must be a positive, found `" ++
+            std.fmt.comptimePrint("{d}", .{profiler_capacity}) ++ "`");
+    }
+}
+
+const cap: comptime_int = if (profiler_mode == .enabled and profiler_capacity > 0) profiler_capacity else 0;
+
 const profiler_mode = if (@hasDecl(root, "profiler_mode")) root.profiler_mode else .enabled;
 comptime {
     const T = @TypeOf(profiler_mode);
@@ -19,8 +34,6 @@ comptime {
         }
     }
 }
-const profiler_capacity: usize = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
-const cap: usize = if (profiler_mode == .enabled) profiler_capacity else 0;
 
 const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
 const Bitset = std.StaticBitSet(cap);
@@ -252,8 +265,8 @@ const Trace = switch (profiler_mode) {
             parent: ?IndexInt,
             kind: enum { block, function, dummy },
 
-            // Usually called with `defer t.stop()` after having started a trace.
-            // This will handle accumulating or not depending on the kind of trace.
+            /// Usually called with `defer t.stop()` after having started a trace.
+            /// This will handle accumulating or not depending on the kind of trace.
             pub fn stop(self: @This()) void {
                 const curr_trace = &self.profiler.trace_stack[self.idx];
 
