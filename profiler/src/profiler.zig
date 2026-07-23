@@ -54,9 +54,10 @@ pub const ProfilerInstance = switch (profiler_mode) {
             }
             pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
                 const process_elapsed = metrics.readCpuTimer() - self.start_tick;
+                const cpu_freq = metrics.readCpuTimerFreq();
                 try writer.print("\n\n Total elapsed: {d} / {d:.4}ms\n\n", .{
                     process_elapsed,
-                    @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(metrics.readCpuTimerFreq())) * 1000,
+                    @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(cpu_freq)) * 1000,
                 });
             }
             pub fn startBlockTrace(_: *@This(), comptime _: []const u8, comptime _: std.builtin.SourceLocation) Trace {
