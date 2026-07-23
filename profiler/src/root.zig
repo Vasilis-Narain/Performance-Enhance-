@@ -32,7 +32,7 @@
 //! Declare either of these at file scope in your root file (the app's main):
 //!
 //! ```zig
-//! pub const profiler_capacity: usize = 1024; // 255 by default, per array
+//! pub const profiler_capacity: usize = 1024; // 255 by default
 //! pub const profiler_enabled: bool = false;  // true by default
 //! ```
 //!
