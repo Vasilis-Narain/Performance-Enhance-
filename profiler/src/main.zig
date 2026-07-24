@@ -5,7 +5,7 @@ const Io = std.Io;
 // This is how to import and setup the profiler. profiler_capacity defaults to 255.
 const Profiler = @import("profiler");
 const metrics = Profiler.metrics;
-pub const profiler_capacity: usize = 8; // defaults to 255
+pub const profiler_capacity = 8; // defaults to 16
 pub const profiler_mode = .enabled; // defaults to enabled
 
 pub fn main(init: std.process.Init) !void {

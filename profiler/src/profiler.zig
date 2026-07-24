@@ -4,36 +4,19 @@ const testing = std.testing;
 
 const metrics = @import("metrics.zig");
 
+const Mode = enum { enabled, disabled, process_timer };
+
 // If you're coming from C, these are the #ifndef's
-const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 255;
+const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 16;
 comptime {
-    const T = @TypeOf(profiler_capacity);
-    if (@typeInfo(T) != .comptime_int) {
-        @compileError("Type of `profiler_capacity` must be able to coerce to `comptime_int`, found `" ++
-            @typeName(T) ++ "`");
-    }
     if (profiler_capacity < 0) {
-        @compileError("`profiler_capacity` must be a positive, found `" ++
+        @compileError("`profiler_capacity` must be positive, found `" ++
             std.fmt.comptimePrint("{d}", .{profiler_capacity}) ++ "`");
     }
 }
 
-const cap: comptime_int = if (profiler_mode == .enabled and profiler_capacity > 0) profiler_capacity else 0;
-
-const profiler_mode = if (@hasDecl(root, "profiler_mode")) root.profiler_mode else .enabled;
-comptime {
-    const T = @TypeOf(profiler_mode);
-    if (@typeInfo(T) != .enum_literal) {
-        @compileError("`profiler_mode` must be an enum literal, found `" ++ @typeName(T) ++ "`. Supported modes are `enabled, disabled, process_timer`.");
-    }
-    switch (profiler_mode) {
-        .enabled, .disabled, .process_timer => {},
-        else => {
-            @compileError("Unsupported `profiler_mode` enum literal. Must be one of `enabled, disabled, process_timer`, found `" ++
-                @tagName(profiler_mode) ++ "`");
-        }
-    }
-}
+const profiler_mode: Mode = if (@hasDecl(root, "profiler_mode")) root.profiler_mode else .enabled;
+const cap: comptime_int = if (profiler_mode == .enabled) profiler_capacity else 0;
 
 const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
 const Bitset = std.StaticBitSet(cap);
@@ -166,12 +149,6 @@ pub const ProfilerInstance = switch (profiler_mode) {
                         else => @compileError("Expected enum literals `function, block`, found `" ++ @tagName(kind) ++ "`"),
                     }
                 }
-                if (profiler_mode != .enabled) return .{
-                    .profiler = pf,
-                    .idx = 0,
-                    .kind = .dummy,
-                    .parent = null,
-                };
 
                 const parent = pf.current;
 
@@ -249,7 +226,6 @@ pub const ProfilerInstance = switch (profiler_mode) {
             }
         };
     },
-    else => unreachable,
 };
 
 const Trace = switch (profiler_mode) {

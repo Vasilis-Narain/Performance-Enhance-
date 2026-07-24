@@ -1,8 +1,5 @@
+//! A minimal static profiler.
 //! # Usage
-//!
-//! Everything sits in one global instance, so you don't have to thread a
-//! profiler through your function signatures. Fixed size arrays, no
-//! allocations.
 //!
 //! ```zig
 //! const Profiler = @import("profiler");
@@ -29,17 +26,18 @@
 //!
 //! # The Zig ifndefs
 //!
-//! Declare either of these at file scope in your root file (the app's main):
+//! Declare either of these at file scope of the root file of the executable (this will usually be `main.zig`):
 //!
 //! ```zig
-//! pub const profiler_capacity: usize = 1024; // 255 by default
-//! pub const profiler_enabled: bool = false;  // true by default
+//! pub const profiler_capacity = 32;    // 16 by default, accepts any positive integer (of course, a large number here has perf consequences)
+//! pub const profiler_mode = .enabled;  // or `.disabled`: no-op and no-memory disable
+//!                                      // or `.process_timer`: like `.disabled` but stamps and prints total time between
+//!                                      //                    `.init()` and `.print()`. Holds one `u64` (the start tsc).
 //! ```
 //!
-//! Attempting to add a trace past `profiler_capacity` will result in it being
-//! dropped (and logged to stderr), however it won't crash.
+//! Adding a trace past `profiler_capacity` will result in it being
+//! dropped (and logged to `stderr`), however it won't crash the program.
 //!
-//! Setting profiler_enabled to false compiles the whole thing out, arrays included.
 //!
 const profiler = @import("profiler.zig");
 
