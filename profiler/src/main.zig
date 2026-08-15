@@ -4,6 +4,7 @@ const Io = std.Io;
 
 // This is how to import and setup the profiler. profiler_capacity defaults to 255.
 const Profiler = @import("profiler");
+const rep = Profiler.rep_tester;
 const metrics = Profiler.metrics;
 pub const profiler_capacity = 8; // defaults to 16
 pub const profiler_mode = .enabled; // defaults to enabled

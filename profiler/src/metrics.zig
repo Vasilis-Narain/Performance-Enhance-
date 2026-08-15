@@ -7,6 +7,87 @@ const native_os = builtin.target.os.tag;
 const windows = std.os.windows;
 const linux = std.os.linux;
 
+const PROCESS_QUERY_INFORMATION: windows.DWORD = 0x0400;
+const PROCESS_VM_READ: windows.DWORD = 0x0010;
+
+pub const OsMetrics = struct {
+    initialized: bool = false,
+    process_handle: windows.HANDLE = undefined,
+
+    pub fn init(self: *@This()) !void {
+        self.process_handle = try zigOpenProcess(
+            windows.GetCurrentProcessId(),
+        );
+        self.initialized = true;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        windows.CloseHandle(self.process_handle);
+        self.initialized = false;
+    }
+};
+pub var global_metrics: OsMetrics = .{};
+
+const PROCESS_MEMORY_COUNTERS_EX = extern struct {
+    cb: windows.DWORD,
+    PageFaultCount: windows.DWORD,
+    PeakWorkingSetSize: windows.SIZE_T,
+    WorkingSetSize: windows.SIZE_T,
+    QuotaPeakPagedPoolUsage: windows.SIZE_T,
+    QuotaPagedPoolUsage: windows.SIZE_T,
+    QuotaPeakNonPagedPoolUsage: windows.SIZE_T,
+    QuotaNonPagedPoolUsage: windows.SIZE_T,
+    PagefileUsage: windows.SIZE_T,
+    PeakPagefileUsage: windows.SIZE_T,
+    PrivateUsage: windows.SIZE_T,
+};
+
+extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: windows.DWORD,
+    bInheritHandle: windows.BOOL,
+    dwProcessId: windows.DWORD,
+) callconv(.winapi) ?windows.HANDLE;
+
+extern "kernel32" fn K32GetProcessMemoryInfo(
+    Process: windows.HANDLE,
+    ppsmemCounters: *PROCESS_MEMORY_COUNTERS_EX,
+    cb: windows.DWORD,
+) callconv(.winapi) windows.BOOL;
+
+fn zigOpenProcess(pid: windows.DWORD) !windows.HANDLE {
+    return OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+        windows.BOOL.FALSE,
+        pid,
+    ) orelse switch (windows.GetLastError()) {
+        .ACCESS_DENIED => error.AccessDenied,
+        .INVALID_PARAMETER => error.NoSuchProcess,
+        else => |err| windows.unexpectedError(err),
+    };
+}
+
+pub fn getOsPageFaultCount() !u64 {
+    switch (native_os) {
+        .windows => {
+            if (!global_metrics.initialized) return error.HandleNotInitialized;
+
+            var memory_counters: PROCESS_MEMORY_COUNTERS_EX = undefined;
+            memory_counters.cb = @sizeOf(@TypeOf(memory_counters));
+
+            if (K32GetProcessMemoryInfo(global_metrics.process_handle, &memory_counters, memory_counters.cb) == windows.BOOL.FALSE) {
+                return switch (windows.GetLastError()) {
+                    .ACCESS_DENIED => error.AccessDenied,
+                    .INVALID_HANDLE => error.InvalidHandle,
+                    else => |err| windows.unexpectedError(err),
+                };
+            }
+
+            return memory_counters.PageFaultCount;
+        },
+        else => @compileError("Not implemented for current OS!"),
+    }
+}
+
 pub fn getOsTimerFreq() u64 {
     switch (native_os) {
         .windows => {

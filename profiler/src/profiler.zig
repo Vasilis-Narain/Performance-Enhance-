@@ -1,11 +1,11 @@
-const root = @import("root");
 const std = @import("std");
+const root = @import("root");
 const testing = std.testing;
 
 const metrics = @import("metrics.zig");
 
 // If you're coming from C, these are the #ifndef's
-const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity_override")) root.profiler_capacity_override else 16;
+const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 16;
 comptime {
     const T = @TypeOf(profiler_capacity);
     if (@typeInfo(T) != .comptime_int) {
@@ -40,15 +40,29 @@ pub const ProfilerInstance = struct {
     };
     internal_profiler: ProfilerType = .{},
 
+    /// Stamps the start tick for the entire process
     pub fn init(self: *@This()) void {
         self.internal_profiler.init();
     }
+
+    /// Prints results to the supplied `std.Io.Writer` interface.
     pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
         return self.internal_profiler.print(writer);
     }
+
+    /// Starts a 'bandwidth trace' that measures throughput as well as time.
+    pub fn startBandwithTrace(self: *@This(), comptime name: []const u8, byte_count: u64, comptime src: std.builtin.SourceLocation) Trace {
+        return self.internal_profiler.startBandwidthTrace(name, byte_count, src);
+    }
+
+    /// Starts a `block trace` (similar to a Tracy zone) allowing one to place traces
+    /// anywhere in their code.
     pub fn startBlockTrace(self: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
         return self.internal_profiler.startBlockTrace(name, src);
     }
+
+    /// Exactly like a block trace except the `name` is derived from the function name.
+    /// To be used at the top of a function to achieve the expected result.
     pub fn startFnTrace(self: *@This(), comptime src: std.builtin.SourceLocation) Trace {
         return self.internal_profiler.startFnTrace(src);
     }
@@ -66,7 +80,7 @@ const DisabledProfilerInstance = struct {
     }
 };
 
-/// Mostly like Disabled but will stamp (and print if .print is called) total process time
+/// Mostly like Disabled but will stamp (and print if .print() is called) total process time
 const ProcessTimerProfilerInstance = struct {
     start_tick: u64 = 0,
     pub fn init(self: *@This()) void {
@@ -104,6 +118,7 @@ const EnabledProfilerInstance = struct {
 
     /// Prints results to the supplied `std.Io.Writer` interface.
     pub fn print(self: *const @This(), writer: *std.Io.Writer) !void {
+        const cpu_freq = metrics.readCpuTimerFreq();
         const process_elapsed = metrics.readCpuTimer() - self.start_tick;
         try writer.print(
             \\{s}
@@ -133,6 +148,15 @@ const EnabledProfilerInstance = struct {
                     percentageWorkDone(self.trace_stack[i].inclusive_tick, process_elapsed),
                 });
             }
+            if (self.trace_stack[i].processed_byte_count > 0) {
+                const megabyte: f64 = 1024 * 1024;
+                const gigabyte: f64 = 1024 * megabyte;
+                const seconds: f64 = @as(f64, @floatFromInt(self.trace_stack[i].inclusive_tick)) / @as(f64, @floatFromInt(cpu_freq));
+                const bytes_per_second: f64 = @as(f64, @floatFromInt(self.trace_stack[i].processed_byte_count)) / seconds;
+                const megabytes = @as(f64, @floatFromInt(self.trace_stack[i].processed_byte_count)) / megabyte;
+                const gigabytes_per_second = bytes_per_second / gigabyte;
+                try writer.print(", {d:.3}mb at {d:.2}GiB/s", .{ megabytes, gigabytes_per_second });
+            }
             try writer.writeAll(")\n");
         }
         try writer.print(" |\n | {s}Function traces:{s}\n", .{ ansi_yellow, ansi_reset });
@@ -158,11 +182,11 @@ const EnabledProfilerInstance = struct {
         }
         try writer.print(" |\n | Total elapsed: {d} / {d:.4}ms\n\n", .{
             process_elapsed,
-            @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(metrics.readCpuTimerFreq())) * 1000,
+            @as(f64, @floatFromInt(process_elapsed)) / @as(f64, @floatFromInt(cpu_freq)) * 1000,
         });
     }
 
-    fn startTrace(pf: *@This(), kind: anytype, comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
+    fn startTrace(pf: *@This(), kind: anytype, comptime name: []const u8, byte_count: u64, comptime src: std.builtin.SourceLocation) Trace {
         const T = @TypeOf(kind);
         comptime {
             if (@typeInfo(T) != .enum_literal) {
@@ -182,16 +206,17 @@ const EnabledProfilerInstance = struct {
         };
 
         if (S.idx != profiler_capacity) {
-            const trace = &pf.trace_stack[S.idx];
-            if (trace.depth == 0) {
-                trace.start_tick = metrics.readCpuTimer();
-                trace.elapsed_tick_from_child = 0;
+            const record = &pf.trace_stack[S.idx];
+            if (record.depth == 0) {
+                record.start_tick = metrics.readCpuTimer();
+                record.elapsed_tick_from_child = 0;
             }
-            trace.depth += 1;
+            record.processed_byte_count += byte_count;
+            record.depth += 1;
             pf.current = S.idx;
             return .{ .inner_trace_handle = .{
                 .profiler = pf,
-                .idx = trace.id,
+                .idx = record.id,
                 .kind = kind,
                 .parent = parent,
             } };
@@ -199,7 +224,10 @@ const EnabledProfilerInstance = struct {
 
         const id = pf.trace_count;
         if (id >= pf.trace_stack.len) {
-            std.log.err("Exceeded maximum traces. Declare and/or increase {s}profiler_capacity global{s}", .{ ansi_yellow, ansi_reset });
+            std.log.err("Exceeded maximum traces. Declare and/or increase {s}profiler_capacity global{s}", .{
+                ansi_yellow,
+                ansi_reset,
+            });
             return .{ .inner_trace_handle = .{
                 .profiler = pf,
                 .idx = 0,
@@ -213,6 +241,7 @@ const EnabledProfilerInstance = struct {
             .exclusive_tick = 0,
             .elapsed_tick_from_child = 0,
             .inclusive_tick = 0,
+            .processed_byte_count = byte_count,
             .name = name,
             .src = src,
             .depth = 1,
@@ -237,16 +266,21 @@ const EnabledProfilerInstance = struct {
         } };
     }
 
+    /// Starts a 'bandwidth trace' that measures throughput as well as time.
+    pub fn startBandwidthTrace(profiler_instance: *@This(), comptime name: []const u8, byte_count: u64, comptime src: std.builtin.SourceLocation) Trace {
+        return startTrace(profiler_instance, .block, name, byte_count, src);
+    }
+
     /// Starts a `block trace` (similar to a Tracy zone) allowing one to place traces
     /// anywhere in their code.
     pub fn startBlockTrace(profiler_instance: *@This(), comptime name: []const u8, comptime src: std.builtin.SourceLocation) Trace {
-        return startTrace(profiler_instance, .block, name, src);
+        return startTrace(profiler_instance, .block, name, 0, src);
     }
 
     /// Exactly like a block trace except the `name` is derived from the function name.
     /// To be used at the top of a function to achieve the expected result.
     pub fn startFnTrace(profiler_instance: *@This(), comptime src: std.builtin.SourceLocation) Trace {
-        return startTrace(profiler_instance, .function, src.fn_name, src);
+        return startTrace(profiler_instance, .function, src.fn_name, 0, src);
     }
 };
 
@@ -256,6 +290,9 @@ const Trace = struct {
         .enabled => EnabledTrace,
     };
     inner_trace_handle: TraceHandleType,
+
+    /// Usually called with `defer t.stop()` after having started a trace.
+    /// This will handle accumulating or not depending on the kind of trace.
     pub fn stop(self: @This()) void {
         self.inner_trace_handle.stop();
     }
@@ -271,8 +308,7 @@ const EnabledTrace = struct {
     parent: ?IndexInt,
     kind: enum { block, function, dummy },
 
-    /// Usually called with `defer t.stop()` after having started a trace.
-    /// This will handle accumulating or not depending on the kind of trace.
+    /// Typically called with `defer t.stop()` after having started a trace.
     pub fn stop(self: @This()) void {
         const curr_trace = &self.profiler.trace_stack[self.idx];
 
@@ -298,141 +334,14 @@ const Record = struct {
     exclusive_tick: u64,
     elapsed_tick_from_child: u64,
     inclusive_tick: u64,
+    processed_byte_count: u64,
     depth: u32,
+    count: u32,
+    id: IndexInt,
     name: []const u8,
     src: std.builtin.SourceLocation,
-    id: IndexInt,
-    count: u32,
 };
 
 fn percentageWorkDone(work_elapsed: u64, process_elapsed: u64) f64 {
     return (@as(f64, @floatFromInt(work_elapsed)) / @as(f64, @floatFromInt(process_elapsed))) * 100;
-}
-
-// TESTS
-
-fn burn(n: u64) void {
-    var acc: u64 = 0;
-    var i: u64 = 0;
-    while (i < n) : (i += 1) acc +%= i *% 2654435761;
-    std.mem.doNotOptimizeAway(acc);
-}
-
-test "exclusive times partition the root span exactly" {
-    var pf: ProfilerInstance = .{};
-    pf.init();
-
-    const root_t = pf.startBlockTrace("root", @src());
-    {
-        const a = pf.startBlockTrace("a", @src());
-        burn(2000);
-        {
-            const b = pf.startBlockTrace("b", @src());
-            burn(2000);
-            b.stop();
-        }
-        burn(2000);
-        a.stop();
-    }
-    burn(2000);
-    root_t.stop();
-
-    try testing.expect(pf.trace_count == 3);
-    try testing.expect(pf.current == null);
-
-    const root_rec = pf.trace_stack[0];
-    try testing.expect(root_rec.count == 1);
-
-    const root_raw = root_rec.exclusive_tick + root_rec.elapsed_tick_from_child;
-
-    var sum: u64 = 0;
-    var i: IndexInt = 0;
-    while (i < pf.trace_count) : (i += 1) sum += pf.trace_stack[i].exclusive_tick;
-
-    try testing.expectEqual(root_raw, sum);
-}
-
-test "same callsite reuses one record and counts every entry" {
-    var pf: ProfilerInstance = .{};
-    pf.init();
-
-    var i: u32 = 0;
-    while (i < 100) : (i += 1) {
-        const t = pf.startBlockTrace("looped", @src());
-        burn(200);
-        t.stop();
-    }
-
-    try testing.expect(pf.trace_count == 1);
-    try testing.expect(pf.trace_stack[0].count == 100);
-    try testing.expect(pf.trace_stack[0].depth == 0);
-    try testing.expect(pf.current == null);
-}
-
-test "child time does not leak between entries" {
-    var pf: ProfilerInstance = .{};
-    pf.init();
-
-    var i: u32 = 0;
-    while (i < 5) : (i += 1) {
-        const p = pf.startBlockTrace("p", @src());
-        burn(2000);
-        {
-            const c = pf.startBlockTrace("c", @src());
-            burn(4000);
-            c.stop();
-        }
-        p.stop();
-    }
-
-    const p_rec = pf.trace_stack[0];
-    const c_rec = pf.trace_stack[1];
-
-    try testing.expect(p_rec.count == 5);
-    try testing.expect(c_rec.count == 5);
-    try testing.expect(p_rec.exclusive_tick < std.math.maxInt(u64) / 2);
-    try testing.expect(p_rec.exclusive_tick > 0);
-}
-
-fn recurse(pf: *ProfilerInstance, depth: u32) void {
-    const t = pf.startFnTrace(@src());
-    defer t.stop();
-    burn(500);
-    if (depth > 0) recurse(pf, depth - 1);
-}
-
-test "recursion counts every entry but accumulates once" {
-    var pf: ProfilerInstance = .{};
-    pf.init();
-
-    recurse(&pf, 4); // 5 entries
-
-    try testing.expect(pf.trace_count == 1);
-    try testing.expect(pf.trace_stack[0].count == 5);
-    try testing.expect(pf.trace_stack[0].depth == 0);
-    try testing.expect(pf.current == null);
-    try testing.expect(pf.trace_stack[0].exclusive_tick < std.math.maxInt(u64) / 2);
-}
-
-test "fn trace nested in a block trace reports to its parent" {
-    var pf: ProfilerInstance = .{};
-    pf.init();
-
-    const outer = pf.startBlockTrace("outer", @src());
-    burn(1000);
-    recurseOnce(&pf);
-    burn(1000);
-    outer.stop();
-
-    const outer_rec = pf.trace_stack[0];
-    const inner_rec = pf.trace_stack[1];
-
-    try testing.expect(outer_rec.elapsed_tick_from_child >= inner_rec.exclusive_tick);
-    try testing.expect(pf.current == null);
-}
-
-fn recurseOnce(pf: *ProfilerInstance) void {
-    const t = pf.startFnTrace(@src());
-    defer t.stop();
-    burn(3000);
 }

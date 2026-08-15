@@ -10,7 +10,7 @@ const Haversine = @import("haversine");
 const Profiler = @import("profiler");
 
 // Zig's way to set library globals (#ifndef if you're coming from C)
-pub const profiler_capacity = 8; // Optional capacity override. Defaults to 255.
+pub const profiler_capacity = 8; // Optional capacity override. Defaults to 16.
 pub const profiler_mode = .enabled; // Set to .disabled for global no-op / no-memory disable.
 
 pub fn main(init: std.process.Init) !void {
@@ -74,7 +74,8 @@ pub fn main(init: std.process.Init) !void {
         .process => {
             const untracked_misc = pf.startBlockTrace("untracked misc", @src());
             defer untracked_misc.stop();
-            // Not bothering with catching errors cause realistically if we can't open the files we should crash.
+
+            // Not bothering with catching errors cause realistically if we can't open the files we deserve to crash.
 
             // Init json file reader
             var json_file = try Io.Dir.cwd().openFile(io, opts.json_file_name, .{ .mode = .read_only });
@@ -86,7 +87,7 @@ pub fn main(init: std.process.Init) !void {
             const json_reader = &json_file_reader.interface;
 
             {
-                const json_read_trace = pf.startBlockTrace("json read", @src());
+                const json_read_trace = pf.startBandwithTrace("json read", json_size, @src());
                 defer json_read_trace.stop();
                 try json_reader.fill(json_size);
             }
@@ -104,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
             const last8 = try byte_reader.take(8);
             const reference_sum: f64 = @bitCast(std.mem.readInt(u64, last8[0..8], .native)); // Handles endianness.
 
-            const points: Haversine.Points = try Haversine.parseJson(arena, json_reader);
+            const points = try Haversine.parseJson(arena, json_reader);
             const haversine_sum = points.total / @as(f64, @floatFromInt(points.count));
 
             {

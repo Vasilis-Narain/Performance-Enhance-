@@ -1,4 +1,4 @@
-//! A minimal static profiler.
+//! A minimal profiler without heap alloc.
 //! # Usage
 //!
 //! ```zig
@@ -41,13 +41,16 @@
 //!
 const profiler = @import("profiler.zig");
 
-/// Set of wrapper functions for performance counters and frequencies
+/// Set of wrapper functions for hw or os performance counters and frequencies
 pub const metrics = @import("metrics.zig");
 
-// The Singleton
+pub const rep_tester = @import("repetition_tester.zig");
+
+// The Global Instance
 pub var instance: profiler.ProfilerInstance = .{};
 
 test {
     _ = metrics;
     _ = profiler;
+    _ = rep_tester;
 }
