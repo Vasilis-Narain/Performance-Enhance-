@@ -30,6 +30,7 @@ const Tester = struct {
         self.elapsed_tsc = metrics.readCpuTimer();
         self.page_faults = try metrics.getOsPageFaultCount();
     }
+
     fn endTime(self: *Tester) !void {
         self.elapsed_tsc = metrics.readCpuTimer() - self.elapsed_tsc;
         self.page_faults = try metrics.getOsPageFaultCount() - self.page_faults;
@@ -147,6 +148,12 @@ fn writeToBufferOnly(buffer: []u8) void {
     }
 }
 
+fn writeToBufferOnlyBackwards(buffer: []u8) void {
+    for (buffer, buffer.len - 1..0) |*byte, index| {
+        byte.* = @truncate(index);
+    }
+}
+
 fn writeToBufferOncePerPage(buffer: []u8) void {
     var i: usize = 0;
     while (i < buffer.len) : (i += 4096) {
@@ -223,6 +230,26 @@ test "just allocate, no file" {
 
     try stdout_writer.print("\n--- {s} ---\n", .{@src().fn_name});
     _ = try repetitionTester(stdout_writer, writeToBufferOnly, .{testing_buff}, buff_size, 10);
+
+    try stdout_writer.flush();
+}
+
+test "just allocate, no file, backwards" {
+    try metrics.global_metrics.init();
+    defer metrics.global_metrics.deinit();
+    const io = std.testing.io;
+    const arena = std.heap.page_allocator;
+
+    var stdout_buff: [1024]u8 = undefined;
+    var stdout_writer_backing: std.Io.File.Writer = .init(.stdout(), io, &stdout_buff);
+    const stdout_writer = &stdout_writer_backing.interface;
+
+    const buff_size: u64 = 1 << 30;
+    const testing_buff = try arena.alloc(u8, buff_size);
+    defer arena.free(testing_buff);
+
+    try stdout_writer.print("\n--- {s} ---\n", .{@src().fn_name});
+    _ = try repetitionTester(stdout_writer, writeToBufferOnlyBackwards, .{testing_buff}, buff_size, 10);
 
     try stdout_writer.flush();
 }
