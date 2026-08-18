@@ -149,8 +149,10 @@ fn writeToBufferOnly(buffer: []u8) void {
 }
 
 fn writeToBufferOnlyBackwards(buffer: []u8) void {
-    for (buffer, buffer.len - 1..0) |*byte, index| {
-        byte.* = @truncate(index);
+    var i = buffer.len;
+    while (i > 0) {
+        i -= 1;
+        buffer[i] = @truncate(i);
     }
 }
 
