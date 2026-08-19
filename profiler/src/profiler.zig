@@ -5,22 +5,16 @@ const testing = std.testing;
 const metrics = @import("metrics.zig");
 
 // If you're coming from C, these are the #ifndef's
-const profiler_capacity: comptime_int = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 16;
+const profiler_capacity = if (@hasDecl(root, "profiler_capacity")) root.profiler_capacity else 16;
 comptime {
-    const T = @TypeOf(profiler_capacity);
-    if (@typeInfo(T) != .comptime_int) {
-        @compileError("Type of `profiler_capacity` must be able to coerce to `comptime_int`, found `" ++
-            @typeName(T) ++ "`");
-    }
     if (profiler_capacity < 0) {
-        @compileError("`profiler_capacity` must be a positive, found `" ++
-            std.fmt.comptimePrint("{d}", .{profiler_capacity}) ++ "`");
+        @compileError(std.fmt.comptimePrint("`profiler_capacity` must be positive, found `{d}`", .{profiler_capacity}));
     }
 }
 
 const Mode = enum { enabled, disabled, process_timer };
-const profiler_mode: Mode = if (@hasDecl(root, "profiler_mode_override")) root.profiler_mode_override else .enabled;
-const cap: comptime_int = if (profiler_mode == .enabled and profiler_capacity > 0) profiler_capacity else 0;
+const profiler_mode: Mode = if (@hasDecl(root, "profiler_mode")) root.profiler_mode else .enabled;
+const cap = if (profiler_mode == .enabled and profiler_capacity > 0) profiler_capacity else 0;
 
 const IndexInt = std.math.IntFittingRange(0, profiler_capacity);
 const Bitset = std.StaticBitSet(cap);
@@ -33,12 +27,14 @@ const ansi_yellow = "\x1b[33m";
 
 /// The Global Instance
 pub const ProfilerInstance = struct {
+    internal_profiler: ProfilerType = .{},
+
+    /// No dynamic dispatch here folks :)
     const ProfilerType = switch (profiler_mode) {
         .enabled => EnabledProfilerInstance,
         .process_timer => ProcessTimerProfilerInstance,
         .disabled => DisabledProfilerInstance,
     };
-    internal_profiler: ProfilerType = .{},
 
     /// Stamps the start tick for the entire process
     pub fn init(self: *@This()) void {
@@ -68,7 +64,7 @@ pub const ProfilerInstance = struct {
     }
 };
 
-/// Stubs to ensure no-op and no-memory usage if profiler is not enabled
+/// Stubs to ensure no-op and no-memory usage if profiler is disabled
 const DisabledProfilerInstance = struct {
     pub fn init(_: *@This()) void {}
     pub fn print(_: *const @This(), _: *std.Io.Writer) !void {}
@@ -291,7 +287,7 @@ const Trace = struct {
     };
     inner_trace_handle: TraceHandleType,
 
-    /// Usually called with `defer t.stop()` after having started a trace.
+    /// Typically called with `defer t.stop()` after having started a trace.
     /// This will handle accumulating or not depending on the kind of trace.
     pub fn stop(self: @This()) void {
         self.inner_trace_handle.stop();
@@ -336,7 +332,7 @@ const Record = struct {
     inclusive_tick: u64,
     processed_byte_count: u64,
     depth: u32,
-    count: u32,
+    count: u32, // hopefully you aren't profiling something called over 4b times. Anyway, it wraps
     id: IndexInt,
     name: []const u8,
     src: std.builtin.SourceLocation,

@@ -46,7 +46,7 @@ pub const metrics = @import("metrics.zig");
 
 pub const rep_tester = @import("repetition_tester.zig");
 
-// The Global Instance
+/// The Global Instance
 pub var instance: profiler.ProfilerInstance = .{};
 
 test {
