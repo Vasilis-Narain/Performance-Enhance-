@@ -27,8 +27,8 @@ const Tester = struct {
     }
 
     fn beginTime(self: *Tester) !void {
-        self.elapsed_tsc = metrics.readCpuTimer();
         self.page_faults = try metrics.getOsPageFaultCount();
+        self.elapsed_tsc = metrics.readCpuTimer();
     }
 
     fn endTime(self: *Tester) !void {
@@ -37,7 +37,34 @@ const Tester = struct {
     }
 };
 
+fn isValidArgs(f_type: std.builtin.Type, args_type: std.builtin.Type) !void {
+    if (f_type != .@"fn") return error.InvalidFunction;
+    if (args_type != .@"struct" or !args_type.@"struct".is_tuple) return error.InvalidArgs;
+
+    const expected_params = f_type.@"fn".params;
+    const provided_params = args_type.@"struct".fields;
+
+    if (expected_params.len != provided_params.len) return error.InvalidArgs;
+
+    inline for (expected_params, provided_params) |param, field| {
+        const expected_type = param.type orelse continue;
+        const provided_type = field.type;
+
+        if (expected_type != provided_type) return error.InvalidArgs;
+    }
+}
+
 pub fn repetitionTester(writer: *std.Io.Writer, comptime f: anytype, args: anytype, bytes_processed: u64, seconds_to_try: u64) !TestResults {
+    comptime {
+        const t_f = @typeInfo(@TypeOf(f));
+        const t_args = @typeInfo(@TypeOf(args));
+        isValidArgs(t_f, t_args) catch |err| switch (err) {
+            .InvalidFunction => @compileError("f must be a function!"),
+            .InvalidArgs => @compileError("args missmatch between provided f function and args struct!"),
+            else => unreachable,
+        };
+    }
+
     var tester: Tester = .init();
     var results: TestResults = .{};
 
@@ -182,7 +209,7 @@ test "read big file fresh (like haversine does)" {
     const size = (try json_file.stat(io)).size;
 
     // The thing:
-    try stdout_writer.writeAll("\n--- discarding buffer per iteration ----\n");
+    try stdout_writer.print("\n--- {s} ---\n", .{@src().fn_name});
     _ = try repetitionTester(stdout_writer, readWholeFileFresh, .{ io, &json_file, arena, size }, size, 10);
 
     try stdout_writer.flush();
@@ -210,7 +237,7 @@ test "read big file reusing buffer" {
     var json_reader = json_file.reader(io, json_buffer);
 
     // The thing:
-    try stdout_writer.writeAll("\n--- not discarding buffer per iteration ----\n");
+    try stdout_writer.print("\n--- {s} ---\n", .{@src().fn_name});
     _ = try repetitionTester(stdout_writer, readWholeFile, .{ &json_reader, json_size }, json_size, 10);
 
     try stdout_writer.flush();
