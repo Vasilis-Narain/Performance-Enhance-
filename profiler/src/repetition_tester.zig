@@ -37,12 +37,13 @@ const Tester = struct {
     }
 };
 
-fn isValidArgs(f_type: std.builtin.Type, args_type: std.builtin.Type) !void {
-    if (f_type != .@"fn") return error.InvalidFunction;
-    if (args_type != .@"struct" or !args_type.@"struct".is_tuple) return error.InvalidArgs;
+/// Helper function to prevent fishy `anytype` usage
+fn isValidArgs(comptime f_type_info: std.builtin.Type, comptime args_type_info: std.builtin.Type) !void {
+    if (f_type_info != .@"fn") return error.InvalidFunction;
+    if (args_type_info != .@"struct" or !args_type_info.@"struct".is_tuple) return error.InvalidArgs;
 
-    const expected_params = f_type.@"fn".params;
-    const provided_params = args_type.@"struct".fields;
+    const expected_params = f_type_info.@"fn".params;
+    const provided_params = args_type_info.@"struct".fields;
 
     if (expected_params.len != provided_params.len) return error.InvalidArgs;
 
@@ -54,13 +55,19 @@ fn isValidArgs(f_type: std.builtin.Type, args_type: std.builtin.Type) !void {
     }
 }
 
+/// This is inherently a debug function as it's designed
+/// to run the provided function (`f`) a potentially infinite
+/// amount of times. It stops once no new minimum runtime is detected
+/// for `seconds_to_try` seconds. All outputs relating to size depend on
+/// `bytes_processed`. This also handles printing through the provided `Writer` instance.
+/// Figured there's no point keeping printing external as this will never be called in a real program.
 pub fn repetitionTester(writer: *std.Io.Writer, comptime f: anytype, args: anytype, bytes_processed: u64, seconds_to_try: u64) !TestResults {
     comptime {
-        const t_f = @typeInfo(@TypeOf(f));
-        const t_args = @typeInfo(@TypeOf(args));
-        isValidArgs(t_f, t_args) catch |err| switch (err) {
+        const f_type_info = @typeInfo(@TypeOf(f));
+        const args_type_info = @typeInfo(@TypeOf(args));
+        isValidArgs(f_type_info, args_type_info) catch |err| switch (err) {
             .InvalidFunction => @compileError("f must be a function!"),
-            .InvalidArgs => @compileError("args missmatch between provided f function and args struct!"),
+            .InvalidArgs => @compileError("Argument missmatch between provided f function and args struct!"),
             else => unreachable,
         };
     }
@@ -114,7 +121,7 @@ pub fn repetitionTester(writer: *std.Io.Writer, comptime f: anytype, args: anyty
     const max_kb_per_fault = calcKibPerPageFault(bytes_processed, results.max_page_faults);
     const avg_kb_per_fault = calcKibPerPageFault(bytes_processed, avg_page_faults);
 
-    try writer.print("                                                                                     \r", .{});
+    try writer.writeAll("                                                                                     \r");
     try writer.print(
         \\  Results:
         \\   max: {d} ({d:.4}ms) @ {d:.2}GiB/s PF: {d} ({d:.2}KiB/fault),
@@ -155,6 +162,8 @@ fn calcGiBs(tsc: u64, cpu_freq: u64, bytes: u64) f64 {
     const gigabytes_per_second = bytes_per_second / gigabyte;
     return gigabytes_per_second;
 }
+
+// Following functions are helpers for testing
 
 fn readWholeFile(reader: *std.Io.File.Reader, size: u64) !void {
     reader.interface.tossBuffered();

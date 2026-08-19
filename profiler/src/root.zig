@@ -52,5 +52,4 @@ pub var instance: profiler.ProfilerInstance = .{};
 test {
     _ = metrics;
     _ = profiler;
-    _ = rep_tester;
 }

@@ -14,6 +14,7 @@ pub const OsMetrics = struct {
     initialized: bool = false,
     process_handle: windows.HANDLE = undefined,
 
+    /// Must be called somewhere at program start
     pub fn init(self: *@This()) !void {
         self.process_handle = try zigOpenProcess(
             windows.GetCurrentProcessId(),
@@ -21,6 +22,9 @@ pub const OsMetrics = struct {
         self.initialized = true;
     }
 
+    /// For completeness. Only call this if for
+    /// whatever reason you need to close the process handle
+    /// before exiting the program.
     pub fn deinit(self: *@This()) void {
         windows.CloseHandle(self.process_handle);
         self.initialized = false;
@@ -69,7 +73,7 @@ fn zigOpenProcess(pid: windows.DWORD) !windows.HANDLE {
 pub fn getOsPageFaultCount() !u64 {
     switch (native_os) {
         .windows => {
-            if (!global_metrics.initialized) return error.HandleNotInitialized;
+            if (!global_metrics.initialized) return error.ProcessHandleNotInitialized;
 
             var memory_counters: PROCESS_MEMORY_COUNTERS_EX = undefined;
             memory_counters.cb = @sizeOf(@TypeOf(memory_counters));
@@ -84,7 +88,7 @@ pub fn getOsPageFaultCount() !u64 {
 
             return memory_counters.PageFaultCount;
         },
-        else => @compileError("Not implemented for current OS!"),
+        else => @compileError("Unsupported OS"),
     }
 }
 
@@ -141,7 +145,7 @@ pub inline fn readCpuTimer() u64 {
             );
             return ret;
         },
-        else => @compileError("Unsupported CPU architecture for cycle counting"),
+        else => @compileError("Unsupported CPU architecture"),
     }
 }
 
