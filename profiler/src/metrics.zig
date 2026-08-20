@@ -16,7 +16,7 @@ pub const OsMetrics = struct {
 
     /// Must be called somewhere at program start
     pub fn init(self: *@This()) !void {
-        self.process_handle = try zigOpenProcess(
+        self.process_handle = try openProcess(
             windows.GetCurrentProcessId(),
         );
         self.initialized = true;
@@ -46,20 +46,22 @@ const PROCESS_MEMORY_COUNTERS_EX = extern struct {
     PrivateUsage: windows.SIZE_T,
 };
 
-extern "kernel32" fn OpenProcess(
-    dwDesiredAccess: windows.DWORD,
-    bInheritHandle: windows.BOOL,
-    dwProcessId: windows.DWORD,
-) callconv(.winapi) ?windows.HANDLE;
+const K32 = struct {
+    extern "kernel32" fn OpenProcess(
+        dwDesiredAccess: windows.DWORD,
+        bInheritHandle: windows.BOOL,
+        dwProcessId: windows.DWORD,
+    ) callconv(.winapi) ?windows.HANDLE;
 
-extern "kernel32" fn K32GetProcessMemoryInfo(
-    Process: windows.HANDLE,
-    ppsmemCounters: *PROCESS_MEMORY_COUNTERS_EX,
-    cb: windows.DWORD,
-) callconv(.winapi) windows.BOOL;
+    extern "kernel32" fn K32GetProcessMemoryInfo(
+        Process: windows.HANDLE,
+        ppsmemCounters: *PROCESS_MEMORY_COUNTERS_EX,
+        cb: windows.DWORD,
+    ) callconv(.winapi) windows.BOOL;
+};
 
-fn zigOpenProcess(pid: windows.DWORD) !windows.HANDLE {
-    return OpenProcess(
+fn openProcess(pid: windows.DWORD) !windows.HANDLE {
+    return K32.OpenProcess(
         PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
         windows.BOOL.FALSE,
         pid,
@@ -78,7 +80,7 @@ pub fn getOsPageFaultCount() !u64 {
             var memory_counters: PROCESS_MEMORY_COUNTERS_EX = undefined;
             memory_counters.cb = @sizeOf(@TypeOf(memory_counters));
 
-            if (K32GetProcessMemoryInfo(global_metrics.process_handle, &memory_counters, memory_counters.cb) == windows.BOOL.FALSE) {
+            if (K32.K32GetProcessMemoryInfo(global_metrics.process_handle, &memory_counters, memory_counters.cb) == windows.BOOL.FALSE) {
                 return switch (windows.GetLastError()) {
                     .ACCESS_DENIED => error.AccessDenied,
                     .INVALID_HANDLE => error.InvalidHandle,

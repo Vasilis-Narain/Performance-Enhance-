@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Make sure to call .init() so that the total process time can be calculated. Obviously finding out
     // the start_tick can only be achieved in runtime.
-    const pf = &Profiler.instance; // just a handy alias. Could use &Profiler.isntance directly
+    const pf = &Profiler.instance; // just a handy alias. Could use Profiler.isntance directly
     pf.init();
 
     // Accessing command line arguments:
