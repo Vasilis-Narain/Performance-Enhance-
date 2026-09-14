@@ -44,7 +44,7 @@ const profiler = @import("profiler.zig");
 /// Set of wrapper functions for hw or os performance counters and frequencies
 pub const metrics = @import("metrics.zig");
 
-pub const rep_tester = @import("repetition_tester.zig");
+pub const repetition_tester = @import("repetition_tester.zig");
 
 /// The Global Instance
 pub var instance: profiler.ProfilerInstance = .{};

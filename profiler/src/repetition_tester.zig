@@ -72,6 +72,8 @@ pub fn repetitionTester(writer: *std.Io.Writer, comptime f: anytype, args: anyty
         };
     }
 
+    if (!metrics.global_metrics.initialized) try metrics.global_metrics.init();
+
     var tester: Tester = .init();
     var results: TestResults = .{};
 
@@ -200,8 +202,8 @@ fn writeToBufferOncePerPage(buffer: []u8) void {
 }
 
 test "read big file fresh (like haversine does)" {
-    try metrics.global_metrics.init();
-    defer metrics.global_metrics.deinit();
+    //try metrics.global_metrics.init();
+    //defer metrics.global_metrics.deinit();
     const io = std.testing.io;
     const arena = std.testing.allocator;
 
@@ -225,8 +227,8 @@ test "read big file fresh (like haversine does)" {
 }
 
 test "read big file reusing buffer" {
-    try metrics.global_metrics.init();
-    defer metrics.global_metrics.deinit();
+    //try metrics.global_metrics.init();
+    //defer metrics.global_metrics.deinit();
     const io = std.testing.io;
     const arena = std.testing.allocator;
 
@@ -253,8 +255,8 @@ test "read big file reusing buffer" {
 }
 
 test "just allocate, no file" {
-    try metrics.global_metrics.init();
-    defer metrics.global_metrics.deinit();
+    //try metrics.global_metrics.init();
+    //defer metrics.global_metrics.deinit();
     const io = std.testing.io;
     const arena = std.heap.page_allocator;
 
@@ -273,8 +275,8 @@ test "just allocate, no file" {
 }
 
 test "just allocate, no file, backwards" {
-    try metrics.global_metrics.init();
-    defer metrics.global_metrics.deinit();
+    //try metrics.global_metrics.init();
+    //defer metrics.global_metrics.deinit();
     const io = std.testing.io;
     const arena = std.heap.page_allocator;
 
@@ -293,8 +295,8 @@ test "just allocate, no file, backwards" {
 }
 
 test "just allocate, no file, write once per page" {
-    try metrics.global_metrics.init();
-    defer metrics.global_metrics.deinit();
+    //try metrics.global_metrics.init();
+    //defer metrics.global_metrics.deinit();
     const io = std.testing.io;
     const arena = std.heap.page_allocator;
 

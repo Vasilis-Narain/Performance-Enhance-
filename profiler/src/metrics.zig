@@ -12,22 +12,37 @@ const PROCESS_VM_READ: windows.DWORD = 0x0010;
 
 pub const OsMetrics = struct {
     initialized: bool = false,
-    process_handle: windows.HANDLE = undefined,
+    process_handle: Handle = undefined,
+
+    const Handle = switch (native_os) {
+        .windows => windows.HANDLE,
+        else => void,
+    };
 
     /// Must be called somewhere at program start
     pub fn init(self: *@This()) !void {
-        self.process_handle = try openProcess(
-            windows.GetCurrentProcessId(),
-        );
-        self.initialized = true;
+        switch (native_os) {
+            .windows => {
+                self.process_handle = try openProcess(
+                    windows.GetCurrentProcessId(),
+                );
+                self.initialized = true;
+            },
+            else => @compileError("Unsupported OS."),
+        }
     }
 
     /// For completeness. Only call this if for
     /// whatever reason you need to close the process handle
     /// before exiting the program.
     pub fn deinit(self: *@This()) void {
-        windows.CloseHandle(self.process_handle);
-        self.initialized = false;
+        switch (native_os) {
+            .windows => {
+                windows.CloseHandle(self.process_handle);
+                self.initialized = false;
+            },
+            else => @compileError("Unsupported OS."),
+        }
     }
 };
 pub var global_metrics: OsMetrics = .{};
