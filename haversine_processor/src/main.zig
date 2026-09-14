@@ -87,7 +87,7 @@ pub fn main(init: std.process.Init) !void {
             const json_reader = &json_file_reader.interface;
 
             {
-                const json_read_trace = pf.startBandwithTrace("json read", json_size, @src());
+                const json_read_trace = pf.startBandwidthTrace("json read", json_size, @src());
                 defer json_read_trace.stop();
                 try json_reader.fill(json_size);
             }

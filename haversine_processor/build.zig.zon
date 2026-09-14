@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .profiler = .{
-            .url = "git+https://github.com/Vasilis-Narain/zig-profiler#062e6ced7d6703dc339f7c97cebd4685a65e4c8e",
-            .hash = "profiler-0.0.0-mX-6JU6gAAC-YciQWgotG8yPr3NetBo4bGR1SosEqmOO",
+            .url = "git+https://github.com/Vasilis-Narain/zig-profiler#ada46001d180d27f3fb3b5e79c949c4ec14d518d",
+            .hash = "profiler-0.0.0-mX-6JU-gAABVJ0xGfKrP8nUxYMflVHSI3Re-3CMMYsnH",
         },
     },
     .paths = .{
